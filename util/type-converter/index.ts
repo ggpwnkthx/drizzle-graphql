@@ -17,8 +17,8 @@ import {
 
 import type { Column } from 'drizzle-orm';
 import type { PgArray } from 'drizzle-orm/pg-core';
-import { capitalize } from '../case-ops';
-import type { ConvertedColumn } from './types';
+import { capitalize } from '../case-ops/index.ts';
+import type { ConvertedColumn } from './types.ts';
 
 const allowedNameChars = /^[a-zA-Z0-9_]+$/;
 

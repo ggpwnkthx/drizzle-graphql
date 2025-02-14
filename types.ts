@@ -21,7 +21,7 @@ import type {
 	GetRemappedTableInsertDataType,
 	GetRemappedTableUpdateDataType,
 	OrderByArgs,
-} from '@/util/builders';
+} from './util/builders/index.ts';
 
 export type AnyDrizzleDB<TSchema extends Record<string, any>> =
 	| PgDatabase<any, TSchema>

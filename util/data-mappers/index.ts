@@ -1,6 +1,6 @@
 import { type Column, getTableColumns, type Table } from 'drizzle-orm';
 import { GraphQLError } from 'graphql';
-import { TableNamedRelations } from '../builders';
+import { TableNamedRelations } from '../builders/index.ts';
 
 export const remapToGraphQLCore = (
 	key: string,

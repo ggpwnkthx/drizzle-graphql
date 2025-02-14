@@ -1,7 +1,6 @@
 import { createTableRelationsHelpers, is, Relation, Relations, Table } from 'drizzle-orm';
-import { MySqlDatabase, MySqlTable } from 'drizzle-orm/mysql-core';
+import { BaseSQLiteDatabase, SQLiteColumn, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import {
-	GraphQLBoolean,
 	GraphQLError,
 	GraphQLInputObjectType,
 	GraphQLInt,
@@ -15,25 +14,26 @@ import {
 	extractOrderBy,
 	extractRelationsParams,
 	extractSelectedColumnsFromTree,
+	extractSelectedColumnsFromTreeSQLFormat,
 	generateTableTypes,
-} from '@/util/builders/common';
-import { capitalize, uncapitalize } from '@/util/case-ops';
+} from './common.ts';
+import { capitalize, uncapitalize } from '../case-ops/index.ts';
 import {
 	remapFromGraphQLArrayInput,
 	remapFromGraphQLSingleInput,
 	remapToGraphQLArrayOutput,
 	remapToGraphQLSingleOutput,
-} from '@/util/data-mappers';
+} from '../data-mappers/index.ts';
 import { parseResolveInfo } from 'graphql-parse-resolve-info';
 
-import type { GeneratedEntities } from '@/types';
+import type { GeneratedEntities } from '../../types.ts';
 import type { RelationalQueryBuilder } from 'drizzle-orm/mysql-core/query-builders/query';
 import type { GraphQLFieldConfig, GraphQLFieldConfigArgumentMap, ThunkObjMap } from 'graphql';
 import type { ResolveTree } from 'graphql-parse-resolve-info';
-import type { CreatedResolver, Filters, TableNamedRelations, TableSelectArgs } from './types';
+import type { CreatedResolver, Filters, TableNamedRelations, TableSelectArgs } from './types.ts';
 
 const generateSelectArray = (
-	db: MySqlDatabase<any, any, any>,
+	db: BaseSQLiteDatabase<any, any, any, any>,
 	tableName: string,
 	tables: Record<string, Table>,
 	relationMap: Record<string, Record<string, TableNamedRelations>>,
@@ -108,7 +108,7 @@ const generateSelectArray = (
 };
 
 const generateSelectSingle = (
-	db: MySqlDatabase<any, any, any>,
+	db: BaseSQLiteDatabase<any, any, any, any>,
 	tableName: string,
 	tables: Record<string, Table>,
 	relationMap: Record<string, Record<string, TableNamedRelations>>,
@@ -180,12 +180,13 @@ const generateSelectSingle = (
 };
 
 const generateInsertArray = (
-	db: MySqlDatabase<any, any, any, any>,
+	db: BaseSQLiteDatabase<any, any, any, any>,
 	tableName: string,
-	table: MySqlTable,
+	table: SQLiteTable,
 	baseType: GraphQLInputObjectType,
 ): CreatedResolver => {
 	const queryName = `insertInto${capitalize(tableName)}`;
+	const typeName = `${capitalize(tableName)}Item`;
 
 	const queryArgs: GraphQLFieldConfigArgumentMap = {
 		values: {
@@ -200,9 +201,22 @@ const generateInsertArray = (
 				const input = remapFromGraphQLArrayInput(args.values, table);
 				if (!input.length) throw new GraphQLError('No values were provided!');
 
-				await db.insert(table).values(input);
+				const parsedInfo = parseResolveInfo(info, {
+					deep: true,
+				}) as ResolveTree;
 
-				return { isSuccess: true };
+				const columns = extractSelectedColumnsFromTreeSQLFormat<SQLiteColumn>(
+					parsedInfo.fieldsByTypeName[typeName]!,
+					table,
+				);
+
+				const result = await db
+					.insert(table)
+					.values(input)
+					.returning(columns)
+					.onConflictDoNothing();
+
+				return remapToGraphQLArrayOutput(result, tableName, table);
 			} catch (e) {
 				if (typeof e === 'object' && typeof (<any> e).message === 'string') {
 					throw new GraphQLError((<any> e).message);
@@ -216,12 +230,13 @@ const generateInsertArray = (
 };
 
 const generateInsertSingle = (
-	db: MySqlDatabase<any, any, any, any>,
+	db: BaseSQLiteDatabase<any, any, any, any>,
 	tableName: string,
-	table: MySqlTable,
+	table: SQLiteTable,
 	baseType: GraphQLInputObjectType,
 ): CreatedResolver => {
 	const queryName = `insertInto${capitalize(tableName)}Single`;
+	const typeName = `${capitalize(tableName)}Item`;
 
 	const queryArgs: GraphQLFieldConfigArgumentMap = {
 		values: {
@@ -235,9 +250,19 @@ const generateInsertSingle = (
 			try {
 				const input = remapFromGraphQLSingleInput(args.values, table);
 
-				await db.insert(table).values(input);
+				const parsedInfo = parseResolveInfo(info, {
+					deep: true,
+				}) as ResolveTree;
 
-				return { isSuccess: true };
+				const columns = extractSelectedColumnsFromTreeSQLFormat<SQLiteColumn>(
+					parsedInfo.fieldsByTypeName[typeName]!,
+					table,
+				);
+				const result = await db.insert(table).values(input).returning(columns).onConflictDoNothing();
+
+				if (!result[0]) return undefined;
+
+				return remapToGraphQLSingleOutput(result[0], tableName, table);
 			} catch (e) {
 				if (typeof e === 'object' && typeof (<any> e).message === 'string') {
 					throw new GraphQLError((<any> e).message);
@@ -251,13 +276,14 @@ const generateInsertSingle = (
 };
 
 const generateUpdate = (
-	db: MySqlDatabase<any, any, any>,
+	db: BaseSQLiteDatabase<any, any, any, any>,
 	tableName: string,
-	table: MySqlTable,
+	table: SQLiteTable,
 	setArgs: GraphQLInputObjectType,
 	filterArgs: GraphQLInputObjectType,
 ): CreatedResolver => {
 	const queryName = `update${capitalize(tableName)}`;
+	const typeName = `${capitalize(tableName)}Item`;
 
 	const queryArgs = {
 		set: {
@@ -274,6 +300,15 @@ const generateUpdate = (
 			try {
 				const { where, set } = args;
 
+				const parsedInfo = parseResolveInfo(info, {
+					deep: true,
+				}) as ResolveTree;
+
+				const columns = extractSelectedColumnsFromTreeSQLFormat<SQLiteColumn>(
+					parsedInfo.fieldsByTypeName[typeName]!,
+					table,
+				);
+
 				const input = remapFromGraphQLSingleInput(set, table);
 				if (!Object.keys(input).length) throw new GraphQLError('Unable to update with no values specified!');
 
@@ -283,9 +318,11 @@ const generateUpdate = (
 					query = query.where(filters) as any;
 				}
 
-				await query;
+				query = query.returning(columns) as any;
 
-				return { isSuccess: true };
+				const result = await query;
+
+				return remapToGraphQLArrayOutput(result, tableName, table);
 			} catch (e) {
 				if (typeof e === 'object' && typeof (<any> e).message === 'string') {
 					throw new GraphQLError((<any> e).message);
@@ -299,12 +336,13 @@ const generateUpdate = (
 };
 
 const generateDelete = (
-	db: MySqlDatabase<any, any, any>,
+	db: BaseSQLiteDatabase<any, any, any, any>,
 	tableName: string,
-	table: MySqlTable,
+	table: SQLiteTable,
 	filterArgs: GraphQLInputObjectType,
 ): CreatedResolver => {
-	const queryName = `deleteFrom${tableName}`;
+	const queryName = `deleteFrom${capitalize(tableName)}`;
+	const typeName = `${capitalize(tableName)}Item`;
 
 	const queryArgs = {
 		where: {
@@ -318,15 +356,26 @@ const generateDelete = (
 			try {
 				const { where } = args;
 
+				const parsedInfo = parseResolveInfo(info, {
+					deep: true,
+				}) as ResolveTree;
+
+				const columns = extractSelectedColumnsFromTreeSQLFormat<SQLiteColumn>(
+					parsedInfo.fieldsByTypeName[typeName]!,
+					table,
+				);
+
 				let query = db.delete(table);
 				if (where) {
 					const filters = extractFilters(table, tableName, where);
 					query = query.where(filters) as any;
 				}
 
-				await query;
+				query = query.returning(columns) as any;
 
-				return { isSuccess: true };
+				const result = await query;
+
+				return remapToGraphQLArrayOutput(result, tableName, table);
 			} catch (e) {
 				if (typeof e === 'object' && typeof (<any> e).message === 'string') {
 					throw new GraphQLError((<any> e).message);
@@ -340,7 +389,7 @@ const generateDelete = (
 };
 
 export const generateSchemaData = <
-	TDrizzleInstance extends MySqlDatabase<any, any, any, any>,
+	TDrizzleInstance extends BaseSQLiteDatabase<any, any, any, any>,
 	TSchema extends Record<string, Table | unknown>,
 >(
 	db: TDrizzleInstance,
@@ -350,8 +399,11 @@ export const generateSchemaData = <
 	const rawSchema = schema;
 	const schemaEntries = Object.entries(rawSchema);
 
-	const tableEntries = schemaEntries.filter(([key, value]) => is(value, MySqlTable)) as [string, MySqlTable][];
-	const tables = Object.fromEntries(tableEntries);
+	const tableEntries = schemaEntries.filter(([key, value]) => is(value, SQLiteTable)) as [string, SQLiteTable][];
+	const tables = Object.fromEntries(tableEntries) as Record<
+		string,
+		SQLiteTable
+	>;
 
 	if (!tableEntries.length) {
 		throw new Error(
@@ -395,27 +447,16 @@ export const generateSchemaData = <
 	const gqlSchemaTypes = Object.fromEntries(
 		Object.entries(tables).map(([tableName, table]) => [
 			tableName,
-			generateTableTypes(tableName, tables, namedRelations, false, relationsDepthLimit),
+			generateTableTypes(tableName, tables, namedRelations, true, relationsDepthLimit),
 		]),
 	);
 
-	const mutationReturnType = new GraphQLObjectType({
-		name: `MutationReturn`,
-		fields: {
-			isSuccess: {
-				type: new GraphQLNonNull(GraphQLBoolean),
-			},
-		},
-	});
-
 	const inputs: Record<string, GraphQLInputObjectType> = {};
-	const outputs: Record<string, GraphQLObjectType> = {
-		MutationReturn: mutationReturnType,
-	};
+	const outputs: Record<string, GraphQLObjectType> = {};
 
 	for (const [tableName, tableTypes] of Object.entries(gqlSchemaTypes)) {
 		const { insertInput, updateInput, tableFilters, tableOrder } = tableTypes.inputs;
-		const { selectSingleOutput, selectArrOutput } = tableTypes.outputs;
+		const { selectSingleOutput, selectArrOutput, singleTableItemOutput, arrTableItemOutput } = tableTypes.outputs;
 
 		const selectArrGenerated = generateSelectArray(
 			db,
@@ -433,16 +474,16 @@ export const generateSchemaData = <
 			tableOrder,
 			tableFilters,
 		);
-		const insertArrGenerated = generateInsertArray(db, tableName, schema[tableName] as MySqlTable, insertInput);
-		const insertSingleGenerated = generateInsertSingle(db, tableName, schema[tableName] as MySqlTable, insertInput);
+		const insertArrGenerated = generateInsertArray(db, tableName, schema[tableName] as SQLiteTable, insertInput);
+		const insertSingleGenerated = generateInsertSingle(db, tableName, schema[tableName] as SQLiteTable, insertInput);
 		const updateGenerated = generateUpdate(
 			db,
 			tableName,
-			schema[tableName] as MySqlTable,
+			schema[tableName] as SQLiteTable,
 			updateInput,
 			tableFilters,
 		);
-		const deleteGenerated = generateDelete(db, tableName, schema[tableName] as MySqlTable, tableFilters);
+		const deleteGenerated = generateDelete(db, tableName, schema[tableName] as SQLiteTable, tableFilters);
 
 		queries[selectArrGenerated.name] = {
 			type: selectArrOutput,
@@ -455,27 +496,28 @@ export const generateSchemaData = <
 			resolve: selectSingleGenerated.resolver,
 		};
 		mutations[insertArrGenerated.name] = {
-			type: mutationReturnType,
+			type: arrTableItemOutput,
 			args: insertArrGenerated.args,
 			resolve: insertArrGenerated.resolver,
 		};
 		mutations[insertSingleGenerated.name] = {
-			type: mutationReturnType,
+			type: singleTableItemOutput,
 			args: insertSingleGenerated.args,
 			resolve: insertSingleGenerated.resolver,
 		};
 		mutations[updateGenerated.name] = {
-			type: mutationReturnType,
+			type: arrTableItemOutput,
 			args: updateGenerated.args,
 			resolve: updateGenerated.resolver,
 		};
 		mutations[deleteGenerated.name] = {
-			type: mutationReturnType,
+			type: arrTableItemOutput,
 			args: deleteGenerated.args,
 			resolve: deleteGenerated.resolver,
 		};
 		[insertInput, updateInput, tableFilters, tableOrder].forEach((e) => (inputs[e.name] = e));
 		outputs[selectSingleOutput.name] = selectSingleOutput;
+		outputs[singleTableItemOutput.name] = singleTableItemOutput;
 	}
 
 	return { queries, mutations, inputs, types: outputs } as any;

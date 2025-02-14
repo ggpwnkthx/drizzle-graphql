@@ -9,7 +9,7 @@ import type {
 	GraphQLObjectType,
 	GraphQLScalarType,
 } from 'graphql';
-import type { ConvertedColumn, ConvertedRelationColumnWithArgs } from '../type-converter';
+import type { ConvertedColumn, ConvertedRelationColumnWithArgs } from '../type-converter/index.ts';
 
 export type TableNamedRelations = {
 	relation: Relation;

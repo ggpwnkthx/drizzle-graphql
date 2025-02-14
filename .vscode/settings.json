@@ -1,0 +1,12 @@
+{
+    "deno.enable": true,
+    "deno.lint": true,
+    "deno.unstable": [],
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.defaultFormatter": "denoland.vscode-deno",
+    "notebook.defaultFormatter": "denoland.vscode-deno",
+    "notebook.displayOrder": ["text/html"]
+  }
+  

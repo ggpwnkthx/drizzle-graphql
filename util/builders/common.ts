@@ -34,14 +34,14 @@ import {
 	GraphQLString,
 } from 'graphql';
 
-import { capitalize } from '@/util/case-ops';
-import { remapFromGraphQLCore } from '@/util/data-mappers';
+import { capitalize } from '../case-ops/index.ts';
+import { remapFromGraphQLCore } from '../data-mappers/index.ts';
 import {
 	ConvertedColumn,
 	ConvertedInputColumn,
 	ConvertedRelationColumnWithArgs,
 	drizzleColumnToGraphQLType,
-} from '@/util/type-converter';
+} from '../type-converter/index.ts';
 
 import type { Column, Table } from 'drizzle-orm';
 import type { ResolveTree } from 'graphql-parse-resolve-info';
@@ -59,7 +59,7 @@ import type {
 	SelectedSQLColumns,
 	TableNamedRelations,
 	TableSelectArgs,
-} from './types';
+} from './types.ts';
 
 const rqbCrashTypes = [
 	'SQLiteBigInt',

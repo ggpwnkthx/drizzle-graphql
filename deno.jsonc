@@ -1,0 +1,17 @@
+{
+  "imports": {
+    "drizzle-orm": "npm:drizzle-orm",
+    "graphql": "npm:graphql",
+    "graphql-parse-resolve-info": "npm:graphql-parse-resolve-info"
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "always"
+  },
+  "nodeModulesDir": "auto",
+  "tasks": { }
+}

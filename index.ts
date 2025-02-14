@@ -10,9 +10,9 @@ import {
 	GraphQLSchemaConfig,
 } from 'graphql';
 
-import { generateMySQL, generatePG, generateSQLite } from '@/util/builders';
+import { generateMySQL, generatePG, generateSQLite } from './util/builders/index.ts';
 import { ObjMap } from 'graphql/jsutils/ObjMap';
-import type { AnyDrizzleDB, BuildSchemaConfig, GeneratedData } from './types';
+import type { AnyDrizzleDB, BuildSchemaConfig, GeneratedData } from './types.ts';
 
 export const buildSchema = <TDbClient extends AnyDrizzleDB<any>>(
 	db: TDbClient,
