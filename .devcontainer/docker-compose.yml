@@ -1,18 +1,28 @@
-version: '3'
+version: '3.8'
 services:
-  workspace:
+  app:
     build:
       context: .
-      dockerfile: .devcontainer/Dockerfile
+      dockerfile: Dockerfile
+    volumes:
+      - ../..:/workspaces:cached
+    command: sleep infinity
     networks:
       - services
   postgresql:
     image: joshuasundance/postgis_pgvector
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: postgres
     networks:
       - services
   mysql:
     image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: drizzle
     networks:
       - services
-network:
+networks:
   services:

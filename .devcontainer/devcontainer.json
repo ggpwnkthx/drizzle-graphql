@@ -10,6 +10,6 @@
     }
   },
   "dockerComposeFile": "docker-compose.yml",
-  "service": "workspace",
+  "service": "app",
   "shutdownAction": "stopCompose"
 }
