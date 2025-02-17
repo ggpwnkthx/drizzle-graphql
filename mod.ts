@@ -71,4 +71,4 @@ export const buildSchema = <TDbClient extends AnyDrizzleDB<any>>(
 	return { schema: outputSchema, entities: generatorOutput };
 };
 
-export * from './types';
+export * from './types.ts';

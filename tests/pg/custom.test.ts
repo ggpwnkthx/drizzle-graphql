@@ -1,28 +1,60 @@
-import { buildSchema, type GeneratedEntities } from '@/index';
-import { type Client, createClient } from '@libsql/client';
+import { buildSchema, type GeneratedEntities } from '../../mod.ts';
+import Docker from 'npm:dockerode';
 import { sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/libsql';
-import { type BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import getPort from 'npm:get-port';
 import { GraphQLObjectType, GraphQLSchema } from 'graphql';
-import { createYoga } from 'graphql-yoga';
+import { createYoga } from 'npm:graphql-yoga';
 import { createServer, type Server } from 'node:http';
-import path from 'path';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import * as schema from './schema/sqlite';
-import { GraphQLClient } from './util/query';
+import postgres, { type Sql } from 'npm:postgres';
+import { v4 as uuid } from 'npm:uuid';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'npm:vitest';
+import * as schema from './schema.ts';
+import { GraphQLClient } from '../gql.ts';
 
 interface Context {
-	db: BaseSQLiteDatabase<'async', any, typeof schema>;
-	client: Client;
+	docker: Docker;
+	pgContainer: Docker.Container;
+	db: PostgresJsDatabase<typeof schema>;
+	client: Sql;
 	schema: GraphQLSchema;
-	entities: GeneratedEntities<BaseSQLiteDatabase<'async', any, typeof schema>>;
+	entities: GeneratedEntities<PostgresJsDatabase<typeof schema>>;
 	server: Server;
 	gql: GraphQLClient;
 }
 
 const ctx: Context = {} as any;
 
+async function createDockerDB(ctx: Context): Promise<string> {
+	const docker = (ctx.docker = new Docker());
+	const port = await getPort({ port: 5433 });
+	const image = 'joshuasundance/postgis_pgvector';
+
+	const pullStream = await docker.pull(image);
+	await new Promise((resolve, reject) =>
+		docker.modem.followProgress(pullStream, (err) => (err ? reject(err) : resolve(err)))
+	);
+
+	const pgContainer = (ctx.pgContainer = await docker.createContainer({
+		Image: image,
+		Env: ['POSTGRES_PASSWORD=postgres', 'POSTGRES_USER=postgres', 'POSTGRES_DB=postgres'],
+		name: `drizzle-graphql-pg-custom-tests-${uuid()}`,
+		HostConfig: {
+			AutoRemove: true,
+			PortBindings: {
+				'5432/tcp': [{ HostPort: `${port}` }],
+			},
+		},
+	}));
+
+	await pgContainer.start();
+
+	return `postgres://postgres:postgres@localhost:${port}/postgres`;
+}
+
 beforeAll(async () => {
+	const connectionString = await createDockerDB(ctx);
+
 	const sleep = 250;
 	let timeLeft = 5000;
 	let connected = false;
@@ -30,9 +62,13 @@ beforeAll(async () => {
 
 	do {
 		try {
-			ctx.client = createClient({
-				url: `file://${path.join(__dirname, '/.temp/db-custom.sqlite')}`,
+			ctx.client = postgres(connectionString, {
+				max: 1,
+				onnotice: () => {
+					// disable notices
+				},
 			});
+			await ctx.client`select 1`;
 			connected = true;
 			break;
 		} catch (e) {
@@ -41,9 +77,8 @@ beforeAll(async () => {
 			timeLeft -= sleep;
 		}
 	} while (timeLeft > 0);
-
 	if (!connected) {
-		console.error('Cannot connect to libsql');
+		console.error('Cannot connect to Postgres');
 		throw lastError;
 	}
 
@@ -99,57 +134,85 @@ beforeAll(async () => {
 	ctx.entities = entities;
 	ctx.server = server;
 	ctx.gql = gql;
+
+	await ctx.db.execute(
+		sql`
+		DO $$ BEGIN
+		CREATE TYPE "role" AS ENUM('admin', 'user');
+	   	EXCEPTION
+		WHEN duplicate_object THEN null;
+	   	END $$;
+		`,
+	);
+});
+afterAll(async () => {
+	await ctx.client?.end().catch(console.error);
+	await ctx.pgContainer?.stop().catch(console.error);
 });
 
-afterAll(async (t) => {
-	ctx.client.close();
-});
+beforeEach(async () => {
+	await ctx.db.execute(
+		sql`CREATE TABLE IF NOT EXISTS "customers" (
+			"id" serial PRIMARY KEY NOT NULL,
+			"address" text NOT NULL,
+			"is_confirmed" boolean,
+			"registration_date" timestamp DEFAULT now() NOT NULL,
+			"user_id" integer NOT NULL
+		);`,
+	);
 
-beforeEach(async (t) => {
-	await ctx.db.run(sql`CREATE TABLE IF NOT EXISTS \`customers\` (
-		\`id\` integer PRIMARY KEY NOT NULL,
-		\`address\` text NOT NULL,
-		\`is_confirmed\` integer,
-		\`registration_date\` integer NOT NULL,
-		\`user_id\` integer NOT NULL,
-		FOREIGN KEY (\`user_id\`) REFERENCES \`users\`(\`id\`) ON UPDATE no action ON DELETE no action
+	await ctx.db.execute(sql`CREATE TABLE IF NOT EXISTS "posts" (
+		"id" serial PRIMARY KEY NOT NULL,
+		"content" text,
+		"author_id" integer
 	);`);
 
-	await ctx.db.run(sql`CREATE TABLE IF NOT EXISTS \`posts\` (
-		\`id\` integer PRIMARY KEY NOT NULL,
-		\`content\` text,
-		\`author_id\` integer
+	await ctx.db.execute(sql`CREATE TABLE IF NOT EXISTS "users" (
+		"a" integer[],
+		"id" serial PRIMARY KEY NOT NULL,
+		"name" text NOT NULL,
+		"email" text,
+		"birthday_string" date,
+		"birthday_date" date,
+		"created_at" timestamp DEFAULT now() NOT NULL,
+		"role" "role",
+		"role1" text,
+		"role2" text DEFAULT 'user',
+		"profession" varchar(20),
+		"initials" char(2),
+		"is_confirmed" boolean,
+		"vector_column" vector(5),
+		"geometry_xy" geometry(point),
+		"geometry_tuple" geometry(point)
 	);`);
 
-	await ctx.db.run(sql`CREATE TABLE IF NOT EXISTS \`users\` (
-		\`id\` integer PRIMARY KEY NOT NULL,
-		\`name\` text NOT NULL,
-		\`email\` text,
-		\`text_json\` text,
-		\`blob_bigint\` blob,
-		\`numeric\` numeric,
-		\`created_at\` integer,
-		\`created_at_ms\` integer,
-		\`real\` real,
-		\`text\` text(255),
-		\`role\` text DEFAULT 'user',
-		\`is_confirmed\` integer
-	);`);
+	await ctx.db.execute(sql`DO $$ BEGIN
+			ALTER TABLE "customers" ADD CONSTRAINT "customers_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE no action ON UPDATE no action;
+		EXCEPTION
+			WHEN duplicate_object THEN null;
+		END $$;
+   `);
 
 	await ctx.db.insert(schema.Users).values([
 		{
+			a: [1, 5, 10, 25, 40],
 			id: 1,
 			name: 'FirstUser',
 			email: 'userOne@notmail.com',
-			textJson: { field: 'value' },
-			blobBigInt: BigInt(10),
-			numeric: '250.2',
+			birthdayString: '2024-04-02T06:44:41.785Z',
+			birthdayDate: new Date('2024-04-02T06:44:41.785Z'),
 			createdAt: new Date('2024-04-02T06:44:41.785Z'),
-			createdAtMs: new Date('2024-04-02T06:44:41.785Z'),
-			real: 13.5,
-			text: 'sometext',
 			role: 'admin',
+			roleText: null,
+			profession: 'FirstUserProf',
+			initials: 'FU',
 			isConfirmed: true,
+			vector: [1, 2, 3, 4, 5],
+			geoXy: {
+				x: 20,
+				y: 20.3,
+			},
+			geoTuple: [20, 20.3],
 		},
 		{
 			id: 2,
@@ -214,30 +277,28 @@ beforeEach(async (t) => {
 	]);
 });
 
-afterEach(async (t) => {
-	await ctx.db.run(sql`PRAGMA foreign_keys = OFF;`);
-	await ctx.db.run(sql`DROP TABLE IF EXISTS \`customers\`;`);
-	await ctx.db.run(sql`DROP TABLE IF EXISTS \`posts\`;`);
-	await ctx.db.run(sql`DROP TABLE IF EXISTS \`users\`;`);
-	await ctx.db.run(sql`PRAGMA foreign_keys = ON;`);
+afterEach(async () => {
+	await ctx.db.execute(sql`DROP TABLE "posts" CASCADE;`);
+	await ctx.db.execute(sql`DROP TABLE "customers" CASCADE;`);
+	await ctx.db.execute(sql`DROP TABLE "users" CASCADE;`);
 });
-
 describe.sequential('Query tests', async () => {
 	it(`Select single`, async () => {
 		const res = await ctx.gql.queryGql(/* GraphQL */ `
 			{
 				customUsersSingle {
+					a
 					id
 					name
 					email
-					textJson
-					blobBigInt
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 				}
 
@@ -252,17 +313,18 @@ describe.sequential('Query tests', async () => {
 		expect(res).toStrictEqual({
 			data: {
 				customUsersSingle: {
+					a: [1, 5, 10, 25, 40],
 					id: 1,
 					name: 'FirstUser',
 					email: 'userOne@notmail.com',
-					textJson: '{"field":"value"}',
-					blobBigInt: '10',
-					numeric: '250.2',
-					createdAt: '2024-04-02T06:44:41.000Z',
-					createdAtMs: '2024-04-02T06:44:41.785Z',
-					real: 13.5,
-					text: 'sometext',
+					birthdayString: '2024-04-02',
+					birthdayDate: '2024-04-02T00:00:00.000Z',
+					createdAt: '2024-04-02T06:44:41.785Z',
 					role: 'admin',
+					roleText: null,
+					roleText2: 'user',
+					profession: 'FirstUserProf',
+					initials: 'FU',
 					isConfirmed: true,
 				},
 				customPostsSingle: {
@@ -278,17 +340,18 @@ describe.sequential('Query tests', async () => {
 		const res = await ctx.gql.queryGql(/* GraphQL */ `
 			{
 				customUsers {
+					a
 					id
 					name
 					email
-					textJson
-					blobBigInt
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 				}
 
@@ -304,45 +367,48 @@ describe.sequential('Query tests', async () => {
 			data: {
 				customUsers: [
 					{
+						a: [1, 5, 10, 25, 40],
 						id: 1,
 						name: 'FirstUser',
 						email: 'userOne@notmail.com',
-						textJson: '{"field":"value"}',
-						blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-02',
+						birthdayDate: '2024-04-02T00:00:00.000Z',
+						createdAt: '2024-04-02T06:44:41.785Z',
 						role: 'admin',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'FirstUserProf',
+						initials: 'FU',
 						isConfirmed: true,
 					},
 					{
+						a: null,
 						id: 2,
 						name: 'SecondUser',
 						email: null,
-						blobBigInt: null,
-						textJson: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: null,
-						numeric: null,
-						real: null,
-						text: null,
-						role: 'user',
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 					},
 					{
+						a: null,
 						id: 5,
 						name: 'FifthUser',
 						email: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						role: 'user',
-						blobBigInt: null,
-						textJson: null,
-						createdAtMs: null,
-						numeric: null,
-						real: null,
-						text: null,
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 					},
 				],
@@ -386,17 +452,18 @@ describe.sequential('Query tests', async () => {
 		const res = await ctx.gql.queryGql(/* GraphQL */ `
 			{
 				customUsersSingle {
+					a
 					id
 					name
 					email
-					textJson
-					blobBigInt
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 					posts {
 						id
@@ -410,16 +477,18 @@ describe.sequential('Query tests', async () => {
 					authorId
 					content
 					author {
+						a
 						id
 						name
 						email
-						textJson
-						numeric
+						birthdayString
+						birthdayDate
 						createdAt
-						createdAtMs
-						real
-						text
 						role
+						roleText
+						roleText2
+						profession
+						initials
 						isConfirmed
 					}
 				}
@@ -429,17 +498,18 @@ describe.sequential('Query tests', async () => {
 		expect(res).toStrictEqual({
 			data: {
 				customUsersSingle: {
+					a: [1, 5, 10, 25, 40],
 					id: 1,
 					name: 'FirstUser',
 					email: 'userOne@notmail.com',
-					textJson: '{"field":"value"}',
-					blobBigInt: '10',
-					numeric: '250.2',
-					createdAt: '2024-04-02T06:44:41.000Z',
-					createdAtMs: '2024-04-02T06:44:41.785Z',
-					real: 13.5,
-					text: 'sometext',
+					birthdayString: '2024-04-02',
+					birthdayDate: '2024-04-02T00:00:00.000Z',
+					createdAt: '2024-04-02T06:44:41.785Z',
 					role: 'admin',
+					roleText: null,
+					roleText2: 'user',
+					profession: 'FirstUserProf',
+					initials: 'FU',
 					isConfirmed: true,
 					posts: [
 						{
@@ -470,18 +540,18 @@ describe.sequential('Query tests', async () => {
 					authorId: 1,
 					content: '1MESSAGE',
 					author: {
+						a: [1, 5, 10, 25, 40],
 						id: 1,
 						name: 'FirstUser',
 						email: 'userOne@notmail.com',
-						textJson: '{"field":"value"}',
-						// RQB can't handle blobs in JSON, for now
-						// blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-02',
+						birthdayDate: '2024-04-02T00:00:00.000Z',
+						createdAt: '2024-04-02T06:44:41.785Z',
 						role: 'admin',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'FirstUserProf',
+						initials: 'FU',
 						isConfirmed: true,
 					},
 				},
@@ -493,17 +563,18 @@ describe.sequential('Query tests', async () => {
 		const res = await ctx.gql.queryGql(/* GraphQL */ `
 			{
 				customUsers {
+					a
 					id
 					name
 					email
-					textJson
-					blobBigInt
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 					posts {
 						id
@@ -517,16 +588,18 @@ describe.sequential('Query tests', async () => {
 					authorId
 					content
 					author {
+						a
 						id
 						name
 						email
-						textJson
-						numeric
+						birthdayString
+						birthdayDate
 						createdAt
-						createdAtMs
-						real
-						text
 						role
+						roleText
+						roleText2
+						profession
+						initials
 						isConfirmed
 					}
 				}
@@ -537,17 +610,18 @@ describe.sequential('Query tests', async () => {
 			data: {
 				customUsers: [
 					{
+						a: [1, 5, 10, 25, 40],
 						id: 1,
 						name: 'FirstUser',
 						email: 'userOne@notmail.com',
-						textJson: '{"field":"value"}',
-						blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-02',
+						birthdayDate: '2024-04-02T00:00:00.000Z',
+						createdAt: '2024-04-02T06:44:41.785Z',
 						role: 'admin',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'FirstUserProf',
+						initials: 'FU',
 						isConfirmed: true,
 						posts: [
 							{
@@ -573,32 +647,34 @@ describe.sequential('Query tests', async () => {
 						],
 					},
 					{
+						a: null,
 						id: 2,
 						name: 'SecondUser',
 						email: null,
-						textJson: null,
-						blobBigInt: null,
-						numeric: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: null,
-						real: null,
-						text: null,
-						role: 'user',
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 						posts: [],
 					},
 					{
+						a: null,
 						id: 5,
 						name: 'FifthUser',
 						email: null,
-						textJson: null,
-						blobBigInt: null,
-						numeric: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: null,
-						real: null,
-						text: null,
-						role: 'user',
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 						posts: [
 							{
@@ -620,18 +696,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '1MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -640,18 +716,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '2MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -660,18 +736,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '3MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -680,18 +756,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 5,
 						content: '1MESSAGE',
 						author: {
+							a: null,
 							id: 5,
 							name: 'FifthUser',
 							email: null,
-							textJson: null,
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: null,
-							numeric: null,
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: null,
-							real: null,
-							text: null,
-							role: 'user',
+							birthdayString: null,
+							birthdayDate: null,
+							createdAt: '2024-04-02T06:44:41.785Z',
+							role: null,
+							roleText: null,
+							roleText2: 'user',
+							profession: null,
+							initials: null,
 							isConfirmed: null,
 						},
 					},
@@ -700,18 +776,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 5,
 						content: '2MESSAGE',
 						author: {
+							a: null,
 							id: 5,
 							name: 'FifthUser',
 							email: null,
-							textJson: null,
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: null,
-							numeric: null,
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: null,
-							real: null,
-							text: null,
-							role: 'user',
+							birthdayString: null,
+							birthdayDate: null,
+							createdAt: '2024-04-02T06:44:41.785Z',
+							role: null,
+							roleText: null,
+							roleText2: 'user',
+							profession: null,
+							initials: null,
 							isConfirmed: null,
 						},
 					},
@@ -720,18 +796,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '4MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -753,17 +829,18 @@ describe.sequential('Query tests', async () => {
 			}
 
 			fragment UsersFrag on UsersSelectItem {
+				a
 				id
 				name
 				email
-				textJson
-				blobBigInt
-				numeric
+				birthdayString
+				birthdayDate
 				createdAt
-				createdAtMs
-				real
-				text
 				role
+				roleText
+				roleText2
+				profession
+				initials
 				isConfirmed
 			}
 
@@ -777,17 +854,18 @@ describe.sequential('Query tests', async () => {
 		expect(res).toStrictEqual({
 			data: {
 				customUsersSingle: {
+					a: [1, 5, 10, 25, 40],
 					id: 1,
 					name: 'FirstUser',
 					email: 'userOne@notmail.com',
-					textJson: '{"field":"value"}',
-					blobBigInt: '10',
-					numeric: '250.2',
-					createdAt: '2024-04-02T06:44:41.000Z',
-					createdAtMs: '2024-04-02T06:44:41.785Z',
-					real: 13.5,
-					text: 'sometext',
+					birthdayString: '2024-04-02',
+					birthdayDate: '2024-04-02T00:00:00.000Z',
+					createdAt: '2024-04-02T06:44:41.785Z',
 					role: 'admin',
+					roleText: null,
+					roleText2: 'user',
+					profession: 'FirstUserProf',
+					initials: 'FU',
 					isConfirmed: true,
 				},
 				customPostsSingle: {
@@ -812,17 +890,18 @@ describe.sequential('Query tests', async () => {
 			}
 
 			fragment UsersFrag on UsersSelectItem {
+				a
 				id
 				name
 				email
-				textJson
-				blobBigInt
-				numeric
+				birthdayString
+				birthdayDate
 				createdAt
-				createdAtMs
-				real
-				text
 				role
+				roleText
+				roleText2
+				profession
+				initials
 				isConfirmed
 			}
 
@@ -837,45 +916,48 @@ describe.sequential('Query tests', async () => {
 			data: {
 				customUsers: [
 					{
+						a: [1, 5, 10, 25, 40],
 						id: 1,
 						name: 'FirstUser',
 						email: 'userOne@notmail.com',
-						textJson: '{"field":"value"}',
-						blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-02',
+						birthdayDate: '2024-04-02T00:00:00.000Z',
+						createdAt: '2024-04-02T06:44:41.785Z',
 						role: 'admin',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'FirstUserProf',
+						initials: 'FU',
 						isConfirmed: true,
 					},
 					{
+						a: null,
 						id: 2,
 						name: 'SecondUser',
 						email: null,
-						blobBigInt: null,
-						textJson: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: null,
-						numeric: null,
-						real: null,
-						text: null,
-						role: 'user',
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 					},
 					{
+						a: null,
 						id: 5,
 						name: 'FifthUser',
 						email: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						role: 'user',
-						blobBigInt: null,
-						textJson: null,
-						createdAtMs: null,
-						numeric: null,
-						real: null,
-						text: null,
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 					},
 				],
@@ -928,17 +1010,18 @@ describe.sequential('Query tests', async () => {
 			}
 
 			fragment UsersFrag on UsersSelectItem {
+				a
 				id
 				name
 				email
-				textJson
-				blobBigInt
-				numeric
+				birthdayString
+				birthdayDate
 				createdAt
-				createdAtMs
-				real
-				text
 				role
+				roleText
+				roleText2
+				profession
+				initials
 				isConfirmed
 				posts {
 					id
@@ -952,16 +1035,18 @@ describe.sequential('Query tests', async () => {
 				authorId
 				content
 				author {
+					a
 					id
 					name
 					email
-					textJson
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 				}
 			}
@@ -970,17 +1055,18 @@ describe.sequential('Query tests', async () => {
 		expect(res).toStrictEqual({
 			data: {
 				customUsersSingle: {
+					a: [1, 5, 10, 25, 40],
 					id: 1,
 					name: 'FirstUser',
 					email: 'userOne@notmail.com',
-					textJson: '{"field":"value"}',
-					blobBigInt: '10',
-					numeric: '250.2',
-					createdAt: '2024-04-02T06:44:41.000Z',
-					createdAtMs: '2024-04-02T06:44:41.785Z',
-					real: 13.5,
-					text: 'sometext',
+					birthdayString: '2024-04-02',
+					birthdayDate: '2024-04-02T00:00:00.000Z',
+					createdAt: '2024-04-02T06:44:41.785Z',
 					role: 'admin',
+					roleText: null,
+					roleText2: 'user',
+					profession: 'FirstUserProf',
+					initials: 'FU',
 					isConfirmed: true,
 					posts: [
 						{
@@ -1011,18 +1097,18 @@ describe.sequential('Query tests', async () => {
 					authorId: 1,
 					content: '1MESSAGE',
 					author: {
+						a: [1, 5, 10, 25, 40],
 						id: 1,
 						name: 'FirstUser',
 						email: 'userOne@notmail.com',
-						textJson: '{"field":"value"}',
-						// RQB can't handle blobs in JSON, for now
-						// blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-02',
+						birthdayDate: '2024-04-02T00:00:00.000Z',
+						createdAt: '2024-04-02T06:44:41.785Z',
 						role: 'admin',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'FirstUserProf',
+						initials: 'FU',
 						isConfirmed: true,
 					},
 				},
@@ -1030,7 +1116,7 @@ describe.sequential('Query tests', async () => {
 		});
 	});
 
-	it(`Select array with relations by fragment`, async () => {
+	it(`Select array with relations`, async () => {
 		const res = await ctx.gql.queryGql(/* GraphQL */ `
 			query testQuery {
 				customUsers {
@@ -1043,17 +1129,18 @@ describe.sequential('Query tests', async () => {
 			}
 
 			fragment UsersFrag on UsersSelectItem {
+				a
 				id
 				name
 				email
-				textJson
-				blobBigInt
-				numeric
+				birthdayString
+				birthdayDate
 				createdAt
-				createdAtMs
-				real
-				text
 				role
+				roleText
+				roleText2
+				profession
+				initials
 				isConfirmed
 				posts {
 					id
@@ -1067,16 +1154,18 @@ describe.sequential('Query tests', async () => {
 				authorId
 				content
 				author {
+					a
 					id
 					name
 					email
-					textJson
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 				}
 			}
@@ -1086,17 +1175,18 @@ describe.sequential('Query tests', async () => {
 			data: {
 				customUsers: [
 					{
+						a: [1, 5, 10, 25, 40],
 						id: 1,
 						name: 'FirstUser',
 						email: 'userOne@notmail.com',
-						textJson: '{"field":"value"}',
-						blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-02',
+						birthdayDate: '2024-04-02T00:00:00.000Z',
+						createdAt: '2024-04-02T06:44:41.785Z',
 						role: 'admin',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'FirstUserProf',
+						initials: 'FU',
 						isConfirmed: true,
 						posts: [
 							{
@@ -1122,32 +1212,34 @@ describe.sequential('Query tests', async () => {
 						],
 					},
 					{
+						a: null,
 						id: 2,
 						name: 'SecondUser',
 						email: null,
-						textJson: null,
-						blobBigInt: null,
-						numeric: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: null,
-						real: null,
-						text: null,
-						role: 'user',
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 						posts: [],
 					},
 					{
+						a: null,
 						id: 5,
 						name: 'FifthUser',
 						email: null,
-						textJson: null,
-						blobBigInt: null,
-						numeric: null,
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: null,
-						real: null,
-						text: null,
-						role: 'user',
+						birthdayString: null,
+						birthdayDate: null,
+						createdAt: '2024-04-02T06:44:41.785Z',
+						role: null,
+						roleText: null,
+						roleText2: 'user',
+						profession: null,
+						initials: null,
 						isConfirmed: null,
 						posts: [
 							{
@@ -1169,18 +1261,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '1MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -1189,18 +1281,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '2MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -1209,18 +1301,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '3MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -1229,18 +1321,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 5,
 						content: '1MESSAGE',
 						author: {
+							a: null,
 							id: 5,
 							name: 'FifthUser',
 							email: null,
-							textJson: null,
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: null,
-							numeric: null,
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: null,
-							real: null,
-							text: null,
-							role: 'user',
+							birthdayString: null,
+							birthdayDate: null,
+							createdAt: '2024-04-02T06:44:41.785Z',
+							role: null,
+							roleText: null,
+							roleText2: 'user',
+							profession: null,
+							initials: null,
 							isConfirmed: null,
 						},
 					},
@@ -1249,18 +1341,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 5,
 						content: '2MESSAGE',
 						author: {
+							a: null,
 							id: 5,
 							name: 'FifthUser',
 							email: null,
-							textJson: null,
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: null,
-							numeric: null,
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: null,
-							real: null,
-							text: null,
-							role: 'user',
+							birthdayString: null,
+							birthdayDate: null,
+							createdAt: '2024-04-02T06:44:41.785Z',
+							role: null,
+							roleText: null,
+							roleText2: 'user',
+							profession: null,
+							initials: null,
 							isConfirmed: null,
 						},
 					},
@@ -1269,18 +1361,18 @@ describe.sequential('Query tests', async () => {
 						authorId: 1,
 						content: '4MESSAGE',
 						author: {
+							a: [1, 5, 10, 25, 40],
 							id: 1,
 							name: 'FirstUser',
 							email: 'userOne@notmail.com',
-							textJson: '{"field":"value"}',
-							// RQB can't handle blobs in JSON, for now
-							// blobBigInt: '10',
-							numeric: '250.2',
-							createdAt: '2024-04-02T06:44:41.000Z',
-							createdAtMs: '2024-04-02T06:44:41.785Z',
-							real: 13.5,
-							text: 'sometext',
+							birthdayString: '2024-04-02',
+							birthdayDate: '2024-04-02T00:00:00.000Z',
+							createdAt: '2024-04-02T06:44:41.785Z',
 							role: 'admin',
+							roleText: null,
+							roleText2: 'user',
+							profession: 'FirstUserProf',
+							initials: 'FU',
 							isConfirmed: true,
 						},
 					},
@@ -1294,31 +1386,32 @@ describe.sequential('Query tests', async () => {
 			mutation {
 				insertIntoCustomUsersSingle(
 					values: {
+						a: [1, 5, 10, 25, 40]
 						id: 3
 						name: "ThirdUser"
 						email: "userThree@notmail.com"
-						textJson: "{ \\"field\\": \\"value\\" }"
-						blobBigInt: "10"
-						numeric: "250.2"
+						birthdayString: "2024-04-02T06:44:41.785Z"
+						birthdayDate: "2024-04-02T06:44:41.785Z"
 						createdAt: "2024-04-02T06:44:41.785Z"
-						createdAtMs: "2024-04-02T06:44:41.785Z"
-						real: 13.5
-						text: "sometext"
 						role: admin
+						roleText: null
+						profession: "ThirdUserProf"
+						initials: "FU"
 						isConfirmed: true
 					}
 				) {
+					a
 					id
 					name
 					email
-					textJson
-					blobBigInt
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 				}
 			}
@@ -1327,17 +1420,18 @@ describe.sequential('Query tests', async () => {
 		expect(res).toStrictEqual({
 			data: {
 				insertIntoCustomUsersSingle: {
+					a: [1, 5, 10, 25, 40],
 					id: 3,
 					name: 'ThirdUser',
 					email: 'userThree@notmail.com',
-					textJson: '{"field":"value"}',
-					blobBigInt: '10',
-					numeric: '250.2',
-					createdAt: '2024-04-02T06:44:41.000Z',
-					createdAtMs: '2024-04-02T06:44:41.785Z',
-					real: 13.5,
-					text: 'sometext',
+					birthdayString: '2024-04-02',
+					birthdayDate: '2024-04-02T00:00:00.000Z',
+					createdAt: '2024-04-02T06:44:41.785Z',
 					role: 'admin',
+					roleText: null,
+					roleText2: 'user',
+					profession: 'ThirdUserProf',
+					initials: 'FU',
 					isConfirmed: true,
 				},
 			},
@@ -1350,46 +1444,48 @@ describe.sequential('Query tests', async () => {
 				insertIntoCustomUsers(
 					values: [
 						{
+							a: [1, 5, 10, 25, 40]
 							id: 3
 							name: "ThirdUser"
 							email: "userThree@notmail.com"
-							textJson: "{ \\"field\\": \\"value\\" }"
-							blobBigInt: "10"
-							numeric: "250.2"
+							birthdayString: "2024-04-02T06:44:41.785Z"
+							birthdayDate: "2024-04-02T06:44:41.785Z"
 							createdAt: "2024-04-02T06:44:41.785Z"
-							createdAtMs: "2024-04-02T06:44:41.785Z"
-							real: 13.5
-							text: "sometext"
 							role: admin
+							roleText: null
+							profession: "ThirdUserProf"
+							initials: "FU"
 							isConfirmed: true
 						}
 						{
+							a: [1, 5, 10, 25, 40]
 							id: 4
 							name: "FourthUser"
 							email: "userFour@notmail.com"
-							textJson: "{ \\"field\\": \\"value\\" }"
-							blobBigInt: "10"
-							numeric: "250.2"
-							createdAt: "2024-04-02T06:44:41.785Z"
-							createdAtMs: "2024-04-02T06:44:41.785Z"
-							real: 13.5
-							text: "sometext"
+							birthdayString: "2024-04-04"
+							birthdayDate: "2024-04-04T00:00:00.000Z"
+							createdAt: "2024-04-04T06:44:41.785Z"
 							role: user
+							roleText: null
+							roleText2: user
+							profession: "FourthUserProf"
+							initials: "SU"
 							isConfirmed: false
 						}
 					]
 				) {
+					a
 					id
 					name
 					email
-					textJson
-					blobBigInt
-					numeric
+					birthdayString
+					birthdayDate
 					createdAt
-					createdAtMs
-					real
-					text
 					role
+					roleText
+					roleText2
+					profession
+					initials
 					isConfirmed
 				}
 			}
@@ -1399,31 +1495,33 @@ describe.sequential('Query tests', async () => {
 			data: {
 				insertIntoCustomUsers: [
 					{
+						a: [1, 5, 10, 25, 40],
 						id: 3,
 						name: 'ThirdUser',
 						email: 'userThree@notmail.com',
-						textJson: '{"field":"value"}',
-						blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-02',
+						birthdayDate: '2024-04-02T00:00:00.000Z',
+						createdAt: '2024-04-02T06:44:41.785Z',
 						role: 'admin',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'ThirdUserProf',
+						initials: 'FU',
 						isConfirmed: true,
 					},
 					{
+						a: [1, 5, 10, 25, 40],
 						id: 4,
 						name: 'FourthUser',
 						email: 'userFour@notmail.com',
-						textJson: '{"field":"value"}',
-						blobBigInt: '10',
-						numeric: '250.2',
-						createdAt: '2024-04-02T06:44:41.000Z',
-						createdAtMs: '2024-04-02T06:44:41.785Z',
-						real: 13.5,
-						text: 'sometext',
+						birthdayString: '2024-04-04',
+						birthdayDate: '2024-04-04T00:00:00.000Z',
+						createdAt: '2024-04-04T06:44:41.785Z',
 						role: 'user',
+						roleText: null,
+						roleText2: 'user',
+						profession: 'FourthUserProf',
+						initials: 'SU',
 						isConfirmed: false,
 					},
 				],
@@ -1913,7 +2011,7 @@ describe.sequential('Arguments tests', async () => {
 			{
 				customUsers {
 					id
-					posts(where: { content: { like: "2%" } }) {
+					posts(where: { content: { ilike: "2%" } }) {
 						id
 						authorId
 						content

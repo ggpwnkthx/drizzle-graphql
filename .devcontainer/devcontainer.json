@@ -1,8 +1,5 @@
 {
   "name": "deno-cms",
-  "build": {
-    "dockerfile": "Dockerfile"
-  },
   "customizations": {
     "vscode": {
       "extensions": [
@@ -11,5 +8,8 @@
         "vscode-icons-team.vscode-icons"
       ]
     }
-  }
+  },
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "shutdownAction": "stopCompose"
 }

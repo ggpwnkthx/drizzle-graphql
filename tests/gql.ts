@@ -1,4 +1,4 @@
-import axios, { AxiosError } from 'axios';
+import axios, { AxiosError } from 'npm:axios';
 
 export class GraphQLClient {
 	constructor(private url: string) {}

@@ -11,7 +11,7 @@ Automatically create GraphQL schema or customizable schema config fields from Dr
 
     ```Typescript
     import { createServer } from 'node:http'
-    import { createYoga } from 'graphql-yoga'
+    import { createYoga } from 'npm:graphql-yoga'
     import { buildSchema } from 'drizzle-graphql'
 
     // db - your drizzle instance
@@ -31,7 +31,7 @@ Automatically create GraphQL schema or customizable schema config fields from Dr
     ```Typescript
     import { createServer } from 'node:http'
     import { GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLSchema } from 'graphql'
-    import { createYoga } from 'graphql-yoga'
+    import { createYoga } from 'npm:graphql-yoga'
     import { buildSchema } from 'drizzle-graphql'
 
     // Schema contains 'Users' and 'Customers' tables

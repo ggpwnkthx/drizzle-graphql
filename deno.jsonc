@@ -1,9 +1,13 @@
 {
+  "name": "@ggpwnkthk/drizzle-graphql",
+  "version": "0.8.5",
+  "license": "Apache-2.0",
   "imports": {
     "drizzle-orm": "npm:drizzle-orm",
     "graphql": "npm:graphql",
     "graphql-parse-resolve-info": "npm:graphql-parse-resolve-info"
   },
+  "exports": "./mod.ts",
   "fmt": {
     "useTabs": false,
     "lineWidth": 80,

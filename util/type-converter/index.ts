@@ -11,18 +11,18 @@ import {
 	GraphQLList,
 	GraphQLNonNull,
 	GraphQLObjectType,
-	GraphQLScalarType,
+	type GraphQLScalarType,
 	GraphQLString,
 } from 'graphql';
 
 import type { Column } from 'drizzle-orm';
 import type { PgArray } from 'drizzle-orm/pg-core';
-import { capitalize } from '../case-ops/index.ts';
+import { capitalize } from '../case-ops.ts';
 import type { ConvertedColumn } from './types.ts';
 
 const allowedNameChars = /^[a-zA-Z0-9_]+$/;
 
-const enumMap = new WeakMap<Object, GraphQLEnumType>();
+const enumMap = new WeakMap<object, GraphQLEnumType>();
 const generateEnumCached = (column: Column, columnName: string, tableName: string): GraphQLEnumType => {
 	if (enumMap.has(column)) return enumMap.get(column)!;
 
@@ -145,4 +145,4 @@ export const drizzleColumnToGraphQLType = <TColumn extends Column, TIsInput exte
 	return typeDesc as ConvertedColumn<TIsInput>;
 };
 
-export * from './types';
+export * from './types.ts';

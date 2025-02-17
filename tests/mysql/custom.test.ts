@@ -1,16 +1,16 @@
-import { buildSchema, type GeneratedEntities } from '@/index';
-import Docker from 'dockerode';
+import { buildSchema, type GeneratedEntities } from '../../mod.ts';
+import Docker from 'npm:dockerode';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2';
-import getPort from 'get-port';
+import getPort from 'npm:get-port';
 import { GraphQLObjectType, GraphQLSchema } from 'graphql';
-import { createYoga } from 'graphql-yoga';
+import { createYoga } from 'npm:graphql-yoga';
 import { createServer, type Server } from 'http';
-import * as mysql from 'mysql2/promise';
-import { v4 as uuid } from 'uuid';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import * as schema from './schema/mysql';
-import { GraphQLClient } from './util/query';
+import * as mysql from 'npm:mysql2/promise';
+import { v4 as uuid } from 'npm:uuid';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'npm:vitest';
+import * as schema from './schema.ts';
+import { GraphQLClient } from '../gql.ts';
 
 interface Context {
 	docker: Docker;
@@ -32,7 +32,7 @@ async function createDockerDB(): Promise<string> {
 
 	const pullStream = await docker.pull(image);
 	await new Promise((resolve, reject) =>
-		docker.modem.followProgress(pullStream, (err) => (err ? reject(err) : resolve(err)))
+		docker.modem.followProgress(pullStream, (err: any) => (err ? reject(err) : resolve(err)))
 	);
 
 	ctx.mysqlContainer = await docker.createContainer({

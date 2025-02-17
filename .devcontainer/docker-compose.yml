@@ -1,0 +1,18 @@
+version: '3'
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    networks:
+      - services
+  postgresql:
+    image: joshuasundance/postgis_pgvector
+    networks:
+      - services
+  mysql:
+    image: mysql:8
+    networks:
+      - services
+network:
+  services:
