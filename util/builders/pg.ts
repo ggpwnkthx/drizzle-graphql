@@ -33,7 +33,7 @@ import {
 import { parseResolveInfo } from "graphql-parse-resolve-info";
 
 import type { GeneratedEntities } from "../../types.ts";
-import type { RelationalQueryBuilder } from "drizzle-orm/mysql-core/query-builders/query";
+import type { RelationalQueryBuilder } from "drizzle-orm/pg-core/query-builders/query";
 import type {
   GraphQLFieldConfig,
   GraphQLFieldConfigArgumentMap,
@@ -57,7 +57,7 @@ const generateSelectArray = (
 ): CreatedResolver => {
   const queryName = `${uncapitalize(tableName)}`;
   const queryBase = db.query[tableName as keyof typeof db.query] as unknown as
-    | RelationalQueryBuilder<any, any, any>
+    | RelationalQueryBuilder<any, any>
     | undefined;
   if (!queryBase) {
     throw new Error(
@@ -138,7 +138,7 @@ const generateSelectSingle = (
 ): CreatedResolver => {
   const queryName = `${uncapitalize(tableName)}Single`;
   const queryBase = db.query[tableName as keyof typeof db.query] as unknown as
-    | RelationalQueryBuilder<any, any, any>
+    | RelationalQueryBuilder<any, any>
     | undefined;
   if (!queryBase) {
     throw new Error(

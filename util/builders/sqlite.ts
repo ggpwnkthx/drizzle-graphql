@@ -42,7 +42,7 @@ import {
 } from "../data-mappers.ts";
 
 import type { GeneratedEntities } from "../../types.ts";
-import type { RelationalQueryBuilder } from "drizzle-orm/mysql-core/query-builders/query";
+import type { RelationalQueryBuilder } from "drizzle-orm/sqlite-core/query-builders/query";
 import type {
   CreatedResolver,
   Filters,
@@ -56,9 +56,9 @@ import type {
 function getQueryBase(
   db: BaseSQLiteDatabase<any, any, any, any>,
   tableName: string,
-): RelationalQueryBuilder<any, any, any> {
+): RelationalQueryBuilder<any, any, any, any> {
   const queryBase = db.query[tableName as keyof typeof db.query] as unknown as
-    | RelationalQueryBuilder<any, any, any>
+    | RelationalQueryBuilder<any, any, any, any>
     | undefined;
   if (!queryBase) {
     throw new Error(

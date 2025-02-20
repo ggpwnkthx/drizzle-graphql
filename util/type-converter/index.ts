@@ -65,12 +65,13 @@ const columnToGraphQLCore = (
 		case 'boolean':
 			return { type: GraphQLBoolean, description: 'Boolean' };
 		case 'json':
-			return column.columnType === 'PgGeometryObject'
-				? {
+			if (column.columnType === 'PgGeometryObject') {
+				return {
 					type: isInput ? geoXyInputType : geoXyType,
 					description: 'Geometry points XY',
 				}
-				: { type: GraphQLString, description: 'JSON' };
+			}
+			return { type: GraphQLString, description: 'JSON' };
 		case 'date':
 			return { type: GraphQLString, description: 'Date' };
 		case 'string':

@@ -1,124 +1,6 @@
-// pg/common.ts
 import { sql } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import Docker from "npm:dockerode";
-import postgres, { type Sql } from "npm:postgres";
-import getPort from "npm:get-port";
-import { v4 as uuid } from "npm:uuid";
-import { GraphQLHTTP } from "jsr:@deno-libs/gql";
-import type { GraphQLSchema } from "graphql";
-import { GraphQLClient } from "../gql.ts";
-import * as schema from "./schema.ts";
-import { buildSchema, type GeneratedEntities } from "../../mod.ts";
-
-export interface Context {
-  docker: Docker;
-  pgContainer: Docker.Container;
-  db: PostgresJsDatabase<typeof schema>;
-  client: Sql;
-  schema: GraphQLSchema;
-  entities: GeneratedEntities<PostgresJsDatabase<typeof schema>>;
-  server: Deno.HttpServer;
-  gql: GraphQLClient;
-}
-
-export async function globalSetup(ctx: Context): Promise<void> {
-  // Create and start the Docker container
-  ctx.docker = new Docker();
-  const port = await getPort({ port: 5432 });
-  const image = "joshuasundance/postgis_pgvector";
-
-  const pullStream = await ctx.docker.pull(image);
-  await new Promise((resolve, reject) =>
-    ctx.docker.modem.followProgress(
-      pullStream,
-      (err: any) => (err ? reject(err) : resolve(err)),
-    )
-  );
-
-  ctx.pgContainer = await ctx.docker.createContainer({
-    Image: image,
-    Env: [
-      "POSTGRES_PASSWORD=postgres",
-      "POSTGRES_USER=postgres",
-      "POSTGRES_DB=postgres",
-    ],
-    name: `drizzle-graphql-pg-tests-${uuid()}`,
-    HostConfig: {
-      AutoRemove: true,
-      PortBindings: {
-        "5432/tcp": [{ HostPort: `${port}` }],
-      },
-    },
-  });
-  await ctx.pgContainer.start();
-
-  // Connect to Postgres (with a retry loop)
-  const connectionString =
-    `postgres://postgres:postgres@localhost:${port}/postgres`;
-  const sleep = 250;
-  let timeLeft = 5000;
-  let connected = false;
-  let lastError: unknown;
-  do {
-    try {
-      ctx.client = postgres(connectionString, {
-        max: 1,
-        onnotice: () => {/* ignore notices */},
-      });
-      await ctx.client`select 1`;
-      connected = true;
-      break;
-    } catch (e) {
-      lastError = e;
-      await new Promise((resolve) => setTimeout(resolve, sleep));
-      timeLeft -= sleep;
-    }
-  } while (timeLeft > 0);
-  if (!connected) {
-    console.error("Cannot connect to Postgres");
-    throw lastError;
-  }
-
-  // Create a Drizzle database instance
-  ctx.db = drizzle(ctx.client, {
-    schema,
-    logger: Deno.env.get("LOG_SQL") ? true : false,
-  });
-
-  // Build the GraphQL schema and entities
-  const { schema: gqlSchema, entities } = buildSchema(ctx.db);
-  ctx.schema = gqlSchema;
-  ctx.entities = entities;
-
-  // Start an HTTP server that serves our GraphQL endpoint
-  ctx.server = Deno.serve(
-    {
-      port: 3000,
-      onListen({ hostname, port }) {
-        console.log(`☁  Started on http://${hostname}:${port}`);
-      },
-    },
-    async (req) => {
-      const { pathname } = new URL(req.url);
-      return pathname === "/graphql"
-        ? await GraphQLHTTP<Request>({ schema: ctx.schema, graphiql: false })(
-          req,
-        )
-        : new Response("Not Found", { status: 404 });
-    },
-  );
-  ctx.gql = new GraphQLClient(`http://localhost:3000/graphql`);
-
-  // Create the "role" enum type if it does not already exist.
-  await ctx.db.execute(sql`
-    DO $$ BEGIN
-      CREATE TYPE "role" AS ENUM('admin', 'user');
-    EXCEPTION
-      WHEN duplicate_object THEN null;
-    END $$;
-  `);
-}
+import type { Context } from "../../examples/pg/context.ts";
+import * as schema from "../../examples/pg/schema.ts";
 
 export async function beforeEachTest(ctx: Context): Promise<void> {
   // Create the tables
@@ -171,6 +53,15 @@ export async function beforeEachTest(ctx: Context): Promise<void> {
     END $$;
   `);
 
+  // Create the "role" enum type if it does not already exist.
+  await ctx.db.execute(sql`
+    DO $$ BEGIN
+      CREATE TYPE "role" AS ENUM('admin', 'user');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
   // Insert seed data into the tables
   await ctx.db.insert(schema.Users).values([
     {
@@ -187,7 +78,10 @@ export async function beforeEachTest(ctx: Context): Promise<void> {
       initials: "FU",
       isConfirmed: true,
       vector: [1, 2, 3, 4, 5],
-      geoXy: { x: 20, y: 20.3 },
+      geoXy: {
+        x: 20,
+        y: 20.3,
+      },
       geoTuple: [20, 20.3],
     },
     {
@@ -233,9 +127,4 @@ export async function afterEachTest(ctx: Context): Promise<void> {
   await ctx.db.execute(sql`DROP TABLE "posts" CASCADE;`);
   await ctx.db.execute(sql`DROP TABLE "customers" CASCADE;`);
   await ctx.db.execute(sql`DROP TABLE "users" CASCADE;`);
-}
-
-export async function globalTeardown(ctx: Context): Promise<void> {
-  await ctx.client?.end().catch(console.error);
-  await ctx.pgContainer?.stop().catch(console.error);
 }

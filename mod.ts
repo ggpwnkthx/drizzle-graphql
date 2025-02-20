@@ -3,15 +3,15 @@ import { MySqlDatabase } from 'drizzle-orm/mysql-core';
 import { PgDatabase } from 'drizzle-orm/pg-core';
 import { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 import {
-	GraphQLFieldConfig,
-	GraphQLInputObjectType,
+	type GraphQLFieldConfig,
+	type GraphQLInputObjectType,
 	GraphQLObjectType,
 	GraphQLSchema,
-	GraphQLSchemaConfig,
+	type GraphQLSchemaConfig,
 } from 'graphql';
 
 import { generateMySQL, generatePG, generateSQLite } from './util/builders/index.ts';
-import { ObjMap } from 'graphql/jsutils/ObjMap';
+import type { ObjMap } from 'graphql/jsutils/ObjMap';
 import type { AnyDrizzleDB, BuildSchemaConfig, GeneratedData } from './types.ts';
 
 export const buildSchema = <TDbClient extends AnyDrizzleDB<any>>(

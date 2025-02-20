@@ -9,8 +9,8 @@ import { createServer, type Server } from 'http';
 import * as mysql from 'npm:mysql2/promise';
 import { v4 as uuid } from 'npm:uuid';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'npm:vitest';
-import * as schema from './schema.ts';
-import { GraphQLClient } from '../gql.ts';
+import * as schema from '../../examples/mysql/schema.ts';
+import { GraphQLClient } from '../../util/gql.ts';
 
 interface Context {
 	docker: Docker;

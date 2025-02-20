@@ -7,6 +7,20 @@
     "editor.insertSpaces": true,
     "editor.defaultFormatter": "denoland.vscode-deno",
     "notebook.defaultFormatter": "denoland.vscode-deno",
-    "notebook.displayOrder": ["text/html"]
+    "notebook.displayOrder": [
+      "text/html"
+    ],
+    "sqltools.connections": [
+      {
+        "previewLimit": 50,
+        "server": "postgresql",
+        "port": 5432,
+        "driver": "PostgreSQL",
+        "name": "postgre",
+        "database": "postgres",
+        "username": "postgres",
+        "password": "postgres"
+      }
+    ]
   }
   

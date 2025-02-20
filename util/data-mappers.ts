@@ -113,7 +113,7 @@ export const remapFromGraphQLCore = (
     }
 
     case "json": {
-      if (column.columnType === "PgGeometryObject") return value;
+      if (column.columnType === "PgGeometryObject") return { ...value };
 
       try {
         return JSON.parse(value);
