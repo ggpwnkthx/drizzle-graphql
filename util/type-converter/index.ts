@@ -139,7 +139,6 @@ function columnToGraphQLCore(
   tableName: string,
   isInput: boolean,
 ): ConvertedColumn<boolean> {
-  console.error(column?.dataType, column?.columnType);
   if (dynamicMappings[column?.columnType]) {
     return dynamicMappings[column.columnType](
       column,
