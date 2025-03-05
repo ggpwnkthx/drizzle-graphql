@@ -13,6 +13,8 @@ import {
 import { generateMySQL, generatePG, generateSQLite } from './util/builders/index.ts';
 import type { ObjMap } from 'graphql/jsutils/ObjMap';
 import type { AnyDrizzleDB, BuildSchemaConfig, GeneratedData } from './types.ts';
+export { registerGraphQLTypeMapping } from "./util/type-converter/index.ts";
+export { registerRemapFromGraphQL, registerRemapToGraphQL } from "./util/data-mappers.ts";
 
 export const buildSchema = <TDbClient extends AnyDrizzleDB<any>>(
 	db: TDbClient,
