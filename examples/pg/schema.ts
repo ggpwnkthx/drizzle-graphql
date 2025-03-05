@@ -15,12 +15,17 @@ import {
 } from "drizzle-orm/pg-core";
 import { registerGraphQLTypeMapping } from "../../util/type-converter/index.ts";
 import {
+  GraphQLError,
   GraphQLFloat,
   GraphQLInputObjectType,
   GraphQLList,
   GraphQLNonNull,
   GraphQLObjectType,
 } from "graphql";
+import {
+  registerRemapFromGraphQL,
+  registerRemapToGraphQL,
+} from "../../util/data-mappers.ts";
 
 export const roleEnum = pgEnum("role", ["admin", "user"]);
 
@@ -113,13 +118,31 @@ registerGraphQLTypeMapping("PgGeometryObject", (_column, isInput) => ({
   type: isInput ? geoXyInputType : geoXyType,
   description: "Geometry points XY",
 }));
+registerRemapToGraphQL(
+  "PgGeometryObject",
+  (value, _column, _key, _tableName, _relationMap) => value,
+);
+registerRemapFromGraphQL(
+  "PgGeometryObject",
+  (value, _column, _columnName) => ({ ...value }),
+);
 
 registerGraphQLTypeMapping("PgGeometry", (_column, _isInput) => ({
   type: new GraphQLList(new GraphQLNonNull(GraphQLFloat)),
   description: "Geometry points XY",
 }));
+registerRemapToGraphQL(
+  "PgGeometry",
+  (value, _column, _key, _tableName, _relationMap) => value,
+);
+registerRemapFromGraphQL("PgGeometry", (value, _column, _columnName) => value);
 
 registerGraphQLTypeMapping("PgVector", (_column, _isInput) => ({
   type: new GraphQLList(new GraphQLNonNull(GraphQLFloat)),
   description: "Vector of Floats",
 }));
+registerRemapToGraphQL(
+  "PgVector",
+  (value, _column, _key, _tableName, _relationMap) => value,
+);
+registerRemapFromGraphQL("PgVector", (value, _column, _columnName) => value);
