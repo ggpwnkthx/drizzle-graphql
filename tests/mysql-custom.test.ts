@@ -1,144 +1,56 @@
-import { buildSchema, type GeneratedEntities } from '../../mod.ts';
-import Docker from 'npm:dockerode';
 import { eq, inArray, sql } from 'drizzle-orm';
-import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2';
-import getPort from 'npm:get-port';
 import { GraphQLObjectType, GraphQLSchema } from 'graphql';
-import { createYoga } from 'npm:graphql-yoga';
-import { createServer, type Server } from 'http';
-import * as mysql from 'npm:mysql2/promise';
-import { v4 as uuid } from 'npm:uuid';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'npm:vitest';
-import * as schema from '../../examples/mysql/schema.ts';
-import { GraphQLClient } from '../../util/gql.ts';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+} from "jsr:@std/testing/bdd";
+import { expect } from "jsr:@std/expect";
+import * as schema from "../examples/mysql/schema.ts";
+import ctx from "../examples/mysql/context.ts";
 
-interface Context {
-	docker: Docker;
-	mysqlContainer: Docker.Container;
-	db: MySql2Database<typeof schema>;
-	client: mysql.Connection;
-	schema: GraphQLSchema;
-	entities: GeneratedEntities<MySql2Database<typeof schema>>;
-	server: Server;
-	gql: GraphQLClient;
-}
-
-const ctx: Context = {} as any;
-
-async function createDockerDB(): Promise<string> {
-	const docker = (ctx.docker = new Docker());
-	const port = await getPort({ port: 3307 });
-	const image = 'mysql:8';
-
-	const pullStream = await docker.pull(image);
-	await new Promise((resolve, reject) =>
-		docker.modem.followProgress(pullStream, (err: any) => (err ? reject(err) : resolve(err)))
-	);
-
-	ctx.mysqlContainer = await docker.createContainer({
-		Image: image,
-		Env: ['MYSQL_ROOT_PASSWORD=mysql', 'MYSQL_DATABASE=drizzle'],
-		name: `drizzle-graphql-mysql-custom-tests-${uuid()}`,
-		HostConfig: {
-			AutoRemove: true,
-			PortBindings: {
-				'3306/tcp': [{ HostPort: `${port}` }],
-			},
-		},
-	});
-
-	await ctx.mysqlContainer.start();
-
-	return `mysql://root:mysql@127.0.0.1:${port}/drizzle`;
-}
-
-beforeAll(async (t) => {
-	const connectionString = await createDockerDB();
-
-	const sleep = 1000;
-	let timeLeft = 30000;
-	let connected = false;
-	let lastError: unknown | undefined;
-	do {
-		try {
-			ctx.client = await mysql.createConnection(connectionString);
-			await ctx.client.connect();
-			connected = true;
-			break;
-		} catch (e) {
-			lastError = e;
-			await new Promise((resolve) => setTimeout(resolve, sleep));
-			timeLeft -= sleep;
-		}
-	} while (timeLeft > 0);
-	if (!connected) {
-		console.error('Cannot connect to MySQL');
-		await ctx.client?.end().catch(console.error);
-		await ctx.mysqlContainer?.stop().catch(console.error);
-		throw lastError;
-	}
-
-	ctx.db = drizzle(ctx.client, {
-		schema,
-		logger: process.env['LOG_SQL'] ? true : false,
-		mode: 'default',
-	});
-
-	const { entities } = buildSchema(ctx.db);
-
-	const customSchema = new GraphQLSchema({
+beforeAll(() => {
+	ctx.schema = new GraphQLSchema({
 		query: new GraphQLObjectType({
 			name: 'Query',
 			fields: {
-				customUsersSingle: entities.queries.usersSingle,
-				customUsers: entities.queries.users,
-				customCustomersSingle: entities.queries.customersSingle,
-				customCustomers: entities.queries.customers,
-				customPostsSingle: entities.queries.postsSingle,
-				customPosts: entities.queries.posts,
+				customUsersSingle: ctx.entities.queries.usersSingle,
+				customUsers: ctx.entities.queries.users,
+				customCustomersSingle: ctx.entities.queries.customersSingle,
+				customCustomers: ctx.entities.queries.customers,
+				customPostsSingle: ctx.entities.queries.postsSingle,
+				customPosts: ctx.entities.queries.posts,
 			},
 		}),
 		mutation: new GraphQLObjectType({
 			name: 'Mutation',
 			fields: {
-				deleteFromCustomUsers: entities.mutations.deleteFromUsers,
-				deleteFromCustomCustomers: entities.mutations.deleteFromCustomers,
-				deleteFromCustomPosts: entities.mutations.deleteFromPosts,
-				updateCustomUsers: entities.mutations.updateUsers,
-				updateCustomCustomers: entities.mutations.updateCustomers,
-				updateCustomPosts: entities.mutations.updatePosts,
-				insertIntoCustomUsers: entities.mutations.insertIntoUsers,
-				insertIntoCustomUsersSingle: entities.mutations.insertIntoUsersSingle,
-				insertIntoCustomCustomers: entities.mutations.insertIntoCustomers,
-				insertIntoCustomCustomersSingle: entities.mutations.insertIntoCustomersSingle,
-				insertIntoCustomPosts: entities.mutations.insertIntoPosts,
-				insertIntoCustomPostsSingle: entities.mutations.insertIntoPostsSingle,
+				deleteFromCustomUsers: ctx.entities.mutations.deleteFromUsers,
+				deleteFromCustomCustomers: ctx.entities.mutations.deleteFromCustomers,
+				deleteFromCustomPosts: ctx.entities.mutations.deleteFromPosts,
+				updateCustomUsers: ctx.entities.mutations.updateUsers,
+				updateCustomCustomers: ctx.entities.mutations.updateCustomers,
+				updateCustomPosts: ctx.entities.mutations.updatePosts,
+				insertIntoCustomUsers: ctx.entities.mutations.insertIntoUsers,
+				insertIntoCustomUsersSingle: ctx.entities.mutations.insertIntoUsersSingle,
+				insertIntoCustomCustomers: ctx.entities.mutations.insertIntoCustomers,
+				insertIntoCustomCustomersSingle: ctx.entities.mutations.insertIntoCustomersSingle,
+				insertIntoCustomPosts: ctx.entities.mutations.insertIntoPosts,
+				insertIntoCustomPostsSingle: ctx.entities.mutations.insertIntoPostsSingle,
 			},
 		}),
-		types: [...Object.values(entities.types), ...Object.values(entities.inputs)],
+		types: [...Object.values(ctx.entities.types), ...Object.values(ctx.entities.inputs)],
 	});
-
-	const yoga = createYoga({
-		schema: customSchema,
-	});
-	const server = createServer(yoga);
-
-	const port = 5001;
-	server.listen(port);
-	const gql = new GraphQLClient(`http://localhost:${port}/graphql`);
-
-	ctx.schema = customSchema;
-	ctx.entities = entities;
-	ctx.server = server;
-	ctx.gql = gql;
 });
 
-afterAll(async (t) => {
+afterAll(async () => {
 	await ctx.client?.end().catch(console.error);
-	await ctx.mysqlContainer?.stop().catch(console.error);
 });
 
-beforeEach(async (t) => {
+beforeEach(async () => {
 	await ctx.db.execute(sql`CREATE TABLE IF NOT EXISTS \`customers\` (
 		\`id\` int AUTO_INCREMENT NOT NULL,
 		\`address\` text NOT NULL,
@@ -254,7 +166,7 @@ beforeEach(async (t) => {
 	]);
 });
 
-afterEach(async (t) => {
+afterEach(async () => {
 	await ctx.db.execute(sql`SET FOREIGN_KEY_CHECKS = 0;`);
 	await ctx.db.execute(sql`DROP TABLE IF EXISTS \`customers\` CASCADE;`);
 	await ctx.db.execute(sql`DROP TABLE IF EXISTS \`posts\` CASCADE;`);
@@ -262,7 +174,7 @@ afterEach(async (t) => {
 	await ctx.db.execute(sql`SET FOREIGN_KEY_CHECKS = 1;`);
 });
 
-describe.sequential('Query tests', async () => {
+describe('Query tests', () => {
 	it(`Select single`, async () => {
 		const res = await ctx.gql.queryGql(/* GraphQL */ `
 			{
@@ -1562,7 +1474,7 @@ describe.sequential('Query tests', async () => {
 	});
 });
 
-describe.sequential('Arguments tests', async () => {
+describe('Arguments tests', () => {
 	it('Order by', async () => {
 		const res = await ctx.gql.queryGql(/* GraphQL */ `
 			{

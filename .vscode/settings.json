@@ -21,6 +21,9 @@
         "username": "postgres",
         "password": "postgres"
       }
-    ]
+    ],
+    "[json]": {
+      "editor.defaultFormatter": "denoland.vscode-deno"
+    }
   }
   
