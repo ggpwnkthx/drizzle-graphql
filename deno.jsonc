@@ -1,6 +1,6 @@
 {
   "name": "@ggpwnkthx/drizzle-graphql",
-  "version": "0.8.5",
+  "version": "0.8.5a",
   "license": "Apache-2.0",
   "imports": {
     "drizzle-orm": "npm:drizzle-orm@^0.40.0",
