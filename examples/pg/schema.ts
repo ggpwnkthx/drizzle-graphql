@@ -15,7 +15,6 @@ import {
 } from "drizzle-orm/pg-core";
 import { registerGraphQLTypeMapping } from "../../util/type-converter/index.ts";
 import {
-  GraphQLError,
   GraphQLFloat,
   GraphQLInputObjectType,
   GraphQLList,

@@ -5,8 +5,7 @@
   "imports": {
     "drizzle-orm": "npm:drizzle-orm",
     "graphql": "npm:graphql",
-    "graphql-parse-resolve-info": "npm:graphql-parse-resolve-info",
-    "better-sqlite3": "npm:better-sqlite3"
+    "graphql-parse-resolve-info": "npm:graphql-parse-resolve-info"
   },
   "exports": "./mod.ts",
   "fmt": {
