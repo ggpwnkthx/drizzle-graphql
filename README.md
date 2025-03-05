@@ -1,86 +1,129 @@
-# Drizzle-GraphQL
+# drizzle-graphql for Deno
 
-Automatically create GraphQL schema or customizable schema config fields from Drizzle ORM schema
+A Deno adaptation of the drizzle-graphql project, enabling seamless integration
+between Drizzle ORM and GraphQL. This module automatically generates a GraphQL
+schema based on your Drizzle models and provides powerful customization options
+to handle custom types.
+
+## Features
+
+- **Deno-Native**\
+  Built for Deno. Designed to work with `Deno.serve` but can work with any HTTP
+  service.
+
+- **GraphQL Integration**\
+  Designed to work with `GraphQLHTTP` from
+  [`jsr:@deno-libs/gql`](https://jsr.io/@deno-libs/gql) to handle GraphQL
+  requests, however other GraphQL handlers like Yoga should work as well.
+
+- **Dynamic Custom Type Handling**\
+  Easily extend and customize type conversions with three new exported
+  functions:
+  - `registerGraphQLTypeMapping`
+  - `registerRemapFromGraphQL`
+  - `registerRemapToGraphQL`
+
+## Installation
+
+Since this is a Deno module, simply import it into your project without any
+additional installation steps:
+
+```typescript
+import {
+  drizzleGraphQL,
+  registerGraphQLTypeMapping,
+  registerRemapFromGraphQL,
+  registerRemapToGraphQL,
+} from "jsr:ggpwnkthx/drizzle-graphql";
+```
 
 ## Usage
 
--   Pass your drizzle database instance and schema into builder to generate `{ schema, entities }` object
--   Use `schema` if pre-built schema already satisfies all your neeeds. It's compatible witn any server that consumes `GraphQLSchema` class instance
+### Setting Up a GraphQL Server
 
-    Example: hosting schema using [GraphQL Yoga](https://the-guild.dev/graphql/yoga-server)
+Below is an example of how to set up a basic GraphQL endpoint using this module
+along with Deno's native HTTP server:
 
-    ```Typescript
-    import { createServer } from 'node:http'
-    import { createYoga } from 'npm:graphql-yoga'
-    import { buildSchema } from 'drizzle-graphql'
+```typescript
+import { drizzleGraphQL } from "jsr:ggpwnkthx/drizzle-graphql";
+import { GraphQLHTTP } from "jsr:@deno-libs/gql";
+import { db } from "./db.ts"; // Your Drizzle ORM database instance
 
-    // db - your drizzle instance
-    import { db } from './database'
+// Generate the GraphQL schema from your Drizzle models
+const schema = drizzleGraphQL(db);
 
-    const { schema } = buildSchema(db)
+// Create a GraphQL handler using GraphQLHTTP
+const graphqlHandler = GraphQLHTTP({ schema });
 
-    const yoga = createYoga({ schema })
+// Use Deno.serve to handle incoming HTTP requests
+Deno.serve((req) => {
+  if (req.url.endsWith("/graphql")) {
+    return graphqlHandler(req);
+  }
+  return new Response("Not Found", { status: 404 });
+});
+```
 
-    server.listen(4000, () => {
-        console.info('Server is running on http://localhost:4000/graphql')
-    })
-    ```
+### Registering Custom Type Mappings
 
--   If you want to customize your schema, you can use `entities` object to build your own new schema
+If your application uses custom data types that need special handling in
+GraphQL, you can register custom converters using the new functions:
 
-    ```Typescript
-    import { createServer } from 'node:http'
-    import { GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLSchema } from 'graphql'
-    import { createYoga } from 'npm:graphql-yoga'
-    import { buildSchema } from 'drizzle-graphql'
+- **Register Type Mapping**
+  ```typescript
+  import { registerGraphQLTypeMapping } from "jsr:ggpwnkthx/drizzle-graphql";
+  // Define the output type for geo columns.
+  const geoXyType = new GraphQLObjectType({
+    name: "PgGeometryObject",
+    fields: {
+      x: { type: GraphQLFloat },
+      y: { type: GraphQLFloat },
+    },
+  });
+  // Define the input type for geo columns.
+  const geoXyInputType = new GraphQLInputObjectType({
+    name: "PgGeometryObjectInput",
+    fields: {
+      x: { type: GraphQLFloat },
+      y: { type: GraphQLFloat },
+    },
+  });
+  // Register the GraphQL mappings.
+  registerGraphQLTypeMapping("PgGeometryObject", (_column, isInput) => ({
+    type: isInput ? geoXyInputType : geoXyType,
+    description: "Geometry points XY",
+  }));
+  ```
+- **Register Data Converter**
+  ```typescript
+  registerRemapToGraphQL(
+    "PgGeometryObject",
+    (value, _column, _key, _tableName, _relationMap) => value,
+  );
+  registerRemapFromGraphQL(
+    "PgGeometryObject",
+    (value, _column, _columnName) => ({ ...value }),
+  );
+  ```
 
-    // Schema contains 'Users' and 'Customers' tables
-    import { db } from './database'
+## Examples
 
-    const { entities } = buildSchema(db)
+The repository includes several examples in the `examples` folder. Each example
+contains a `context.ts` file that demonstrates various configurations and usage
+scenarios:
 
-    // You can customize which parts of queries or mutations you want
-    const schema = new GraphQLSchema({
-        query: new GraphQLObjectType({
-            name: 'Query',
-            fields: {
-                // Select only wanted queries out of all generated
-                users: entities.queries.users,
-                customer: entities.queries.customersSingle,
+- How to integrate the generated GraphQL schema with your Drizzle ORM instance.
+- How to configure and register custom type mappings.
+- How to set up a Deno server using Deno.serve and GraphQLHTTP.
 
-                // Create a custom one
-                customUsers: {
-                    // You can reuse and customize types from original schema
-                    type: new GraphQLList(new GraphQLNonNull(entities.types.UsersItem)),
-                    args: {
-                        // You can reuse inputs as well
-                        where: {
-                            type: entities.inputs.UsersFilters
-                        }
-                    },
-                    resolve: async (source, args, context, info) => {
-                        // Your custom logic goes here...
-                        const result = await db.select(schema.Users).where()...
+Review these examples to gain a deeper understanding of how to configure and
+extend drizzle-graphql for your specific use case.
 
-                        return result
-                    }
-                }
-            }
-        }),
-        // Same rules apply to mutations
-        mutation: new GraphQLObjectType({
-            name: 'Mutation',
-            fields: entities.mutations
-        }),
-        // In case you need types inside your schema
-        types: [...Object.values(entities.types), ...Object.values(entities.inputs)]
-    })
+## Contributing
 
-    const yoga = createYoga({
-        schema
-    })
+Contributions are welcome! If you encounter issues or have ideas for
+improvements, please open an issue or submit a pull request.
 
-    server.listen(4000, () => {
-        console.info('Server is running on http://localhost:4000/graphql')
-    })
-    ```
+## License
+
+This project is licensed under the Apache License.
