@@ -27,7 +27,7 @@ const remapFromRegistry: Record<string, RemapFromGraphQLFunction> = {};
 export const registerRemapToGraphQL = (
   typeKey: string,
   mapper: RemapToGraphQLFunction,
-) => {
+): void => {
   remapToRegistry[typeKey] = mapper;
 };
 
@@ -38,7 +38,7 @@ export const registerRemapToGraphQL = (
 export const registerRemapFromGraphQL = (
   typeKey: string,
   mapper: RemapFromGraphQLFunction,
-) => {
+): void => {
   remapFromRegistry[typeKey] = mapper;
 };
 

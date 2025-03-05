@@ -1,6 +1,6 @@
 import { is } from "drizzle-orm";
 import { MySqlInt, MySqlSerial } from "drizzle-orm/mysql-core";
-import { PgArray, PgInteger, PgSerial } from "drizzle-orm/pg-core";
+import { type PgArray, PgInteger, PgSerial } from "drizzle-orm/pg-core";
 import { SQLiteInteger } from "drizzle-orm/sqlite-core";
 import {
   GraphQLBoolean,
