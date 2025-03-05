@@ -51,7 +51,15 @@ import type {
 } from "./types.ts";
 
 /**
- * Retrieves the query builder for a given table from the database instance.
+ * Retrieves the query builder for a specified table from the SQLite database instance.
+ *
+ * This function extracts the query builder corresponding to the provided table name from the database's query object.
+ * If the query builder is not found, it throws an error indicating that the table was not found in the database instance.
+ *
+ * @param db - The SQLite database instance.
+ * @param tableName - The name of the table for which to retrieve the query builder.
+ * @returns The relational query builder for the specified table.
+ * @throws Error if the query builder for the table does not exist.
  */
 function getQueryBase(
   db: BaseSQLiteDatabase<any, any, any, any>,
@@ -69,7 +77,22 @@ function getQueryBase(
 }
 
 /**
- * Generates a select resolver for a single or multiple records.
+ * Generates a select resolver for retrieving either a single record or multiple records from a table.
+ *
+ * This function creates a resolver that:
+ * - Extracts and processes the GraphQL query information using the resolve info.
+ * - Determines the selected columns, order, filter conditions, and relation parameters.
+ * - Executes the appropriate database query (findFirst for single record or findMany for multiple records).
+ * - Remaps the query result to the appropriate GraphQL output format.
+ *
+ * @param db - The SQLite database instance.
+ * @param tableName - The name of the table to query.
+ * @param tables - A mapping of all tables in the schema.
+ * @param relationMap - A mapping of table relations keyed by table name.
+ * @param orderArgs - The GraphQL input object type defining ordering arguments.
+ * @param filterArgs - The GraphQL input object type defining filter arguments.
+ * @param single - A boolean flag indicating whether to query a single record (true) or multiple records (false).
+ * @returns A CreatedResolver object containing the resolver name, arguments, and resolver function.
  */
 const generateSelect = (
   db: BaseSQLiteDatabase<any, any, any, any>,
@@ -101,15 +124,19 @@ const generateSelect = (
           deep: true,
         }) as ResolveTree;
 
-        // Extract common query parts.
+        // Extract the selected fields from the parsed resolve info.
         const selectedFields = parsedInfo.fieldsByTypeName[typeName]!;
+        // Determine which columns are selected based on the GraphQL query.
         const columns = extractSelectedColumnsFromTree(selectedFields, table);
+        // Build the order by clause if provided.
         const orderByClause = orderBy
           ? extractOrderBy(table, orderBy)
           : undefined;
+        // Build the where clause if provided.
         const whereClause = where
           ? extractFilters(table, tableName, where)
           : undefined;
+        // Extract relation parameters for nested queries if available.
         const withClause = relationMap[tableName]
           ? extractRelationsParams(
             relationMap,
@@ -120,6 +147,7 @@ const generateSelect = (
           )
           : undefined;
 
+        // Execute the query using the appropriate method based on the 'single' flag.
         const query = single
           ? queryBase.findFirst({
             columns,
@@ -138,6 +166,7 @@ const generateSelect = (
           });
 
         const result = await query;
+        // Remap the query result to the appropriate GraphQL output format.
         if (Array.isArray(result)) {
           return remapToGraphQLArrayOutput(
             result,
@@ -155,7 +184,20 @@ const generateSelect = (
 };
 
 /**
- * Generates an insert resolver for single or batch inputs.
+ * Generates an insert resolver for handling single or batch insert operations.
+ *
+ * This function creates a resolver that:
+ * - Accepts input values (single object or array of objects).
+ * - Remaps the input data from GraphQL format to the database format.
+ * - Executes the insert operation on the table, with conflict resolution (do nothing on conflict).
+ * - Returns the inserted record(s) after remapping them to GraphQL output format.
+ *
+ * @param db - The SQLite database instance.
+ * @param tableName - The name of the table into which data will be inserted.
+ * @param table - The SQLite table definition.
+ * @param baseType - The GraphQL input object type representing the table insert input.
+ * @param single - A boolean flag indicating whether the insert is for a single record (true) or multiple records (false).
+ * @returns A CreatedResolver object containing the resolver name, arguments, and resolver function.
  */
 const generateInsert = (
   db: BaseSQLiteDatabase<any, any, any, any>,
@@ -182,6 +224,7 @@ const generateInsert = (
     args: queryArgs,
     resolver: withGraphQLError(
       async (source, args: { values: any }, context, info) => {
+        // Remap input data from GraphQL to the database format.
         const input = single
           ? remapFromGraphQLSingleInput(args.values, table)
           : remapFromGraphQLArrayInput(args.values, table);
@@ -192,6 +235,7 @@ const generateInsert = (
           deep: true,
         }) as ResolveTree;
         const selectedFields = parsedInfo.fieldsByTypeName[typeName]!;
+        // Extract the columns to be returned after insertion.
         const columns = extractSelectedColumnsFromTreeSQLFormat<SQLiteColumn>(
           selectedFields,
           table,
@@ -214,7 +258,20 @@ const generateInsert = (
 };
 
 /**
- * Generates a resolver for update or delete operations.
+ * Generates a resolver for update or delete operations on a table.
+ *
+ * This function creates a resolver that handles either update or delete operations.
+ * For update operations, it remaps the input values and applies them via the update query.
+ * For delete operations, it constructs a delete query.
+ * In both cases, it applies filtering conditions and returns the modified records remapped to GraphQL format.
+ *
+ * @param db - The SQLite database instance.
+ * @param tableName - The name of the table to modify.
+ * @param table - The SQLite table definition.
+ * @param filterArgs - The GraphQL input object type representing filter arguments.
+ * @param inputType - The GraphQL input object type representing update input (only applicable for update operations).
+ * @param operation - The type of operation: either "update" or "delete".
+ * @returns A CreatedResolver object containing the resolver name, arguments, and resolver function.
  */
 const generateModify = (
   db: BaseSQLiteDatabase<any, any, any, any>,
@@ -250,6 +307,7 @@ const generateModify = (
           deep: true,
         }) as ResolveTree;
         const selectedFields = parsedInfo.fieldsByTypeName[typeName]!;
+        // Extract the columns that should be returned after the operation.
         const columns = extractSelectedColumnsFromTreeSQLFormat<SQLiteColumn>(
           selectedFields,
           table,
@@ -257,6 +315,7 @@ const generateModify = (
 
         let query;
         if (operation === "update") {
+          // Remap the update input data from GraphQL format.
           const input = remapFromGraphQLSingleInput(args.set!, table);
           if (!Object.keys(input).length) {
             throw new GraphQLError(
@@ -281,7 +340,23 @@ const generateModify = (
 };
 
 /**
- * Generates the GraphQL schema data (queries, mutations, inputs, types) from the provided schema.
+ * Generates the complete GraphQL schema data from the provided Drizzle-ORM schema and SQLite database instance.
+ *
+ * This function processes the schema to extract table definitions and relations, then generates:
+ * - GraphQL query resolvers for selecting records.
+ * - GraphQL mutation resolvers for inserting, updating, and deleting records.
+ * - GraphQL input and output types for each table.
+ *
+ * The resulting schema data includes queries, mutations, inputs, and types which can be used to build a complete
+ * GraphQL schema.
+ *
+ * @template TDrizzleInstance - The type of the SQLite database instance.
+ * @template TSchema - The Drizzle-ORM schema object, mapping table names to table definitions.
+ * @param db - The SQLite database instance.
+ * @param schema - The Drizzle-ORM schema object.
+ * @param relationsDepthLimit - Optional limit for the depth of generated relation fields in queries.
+ * @returns An object containing the generated queries, mutations, inputs, and output types.
+ * @throws Error if no tables are detected in the provided schema.
  */
 export const generateSchemaData = <
   TDrizzleInstance extends BaseSQLiteDatabase<any, any, any, any>,

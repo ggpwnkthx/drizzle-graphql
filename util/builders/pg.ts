@@ -47,6 +47,23 @@ import type {
   TableSelectArgs,
 } from "./types.ts";
 
+/**
+ * Generates a resolver for selecting an array of records from a PostgreSQL table.
+ *
+ * This function constructs a GraphQL field resolver that handles fetching multiple records
+ * (i.e. findMany) from the specified table. It extracts the selected columns, applies ordering,
+ * filtering, and relation parameters based on the GraphQL resolve info and provided arguments,
+ * and finally remaps the raw query results into the appropriate GraphQL output format.
+ *
+ * @param db - The PostgreSQL database instance.
+ * @param tableName - The name of the table to query.
+ * @param tables - A record mapping table names to their corresponding Table definitions.
+ * @param relationMap - A mapping of table names to their relations (with inner relation configurations).
+ * @param orderArgs - The GraphQL input type defining ordering arguments.
+ * @param filterArgs - The GraphQL input type defining filtering arguments.
+ * @returns A CreatedResolver object containing the resolver name, arguments, and the resolver function.
+ * @throws Error if the query builder for the specified table is not found.
+ */
 const generateSelectArray = (
   db: PgDatabase<any, any, any>,
   tableName: string,
@@ -85,7 +102,12 @@ const generateSelectArray = (
 
   return {
     name: queryName,
-    resolver: async (source, args: Partial<TableSelectArgs>, context, info) => {
+    resolver: async (
+      _source,
+      args: Partial<TableSelectArgs>,
+      _context,
+      info,
+    ) => {
       try {
         const { offset, limit, orderBy, where } = args;
 
@@ -97,7 +119,7 @@ const generateSelectArray = (
           columns: extractSelectedColumnsFromTree(
             parsedInfo.fieldsByTypeName[typeName]!,
             table,
-          ), /*extractSelectedColumnsFromNode(tableSelection, info.fragments, table) */
+          ),
           offset,
           limit,
           orderBy: orderBy ? extractOrderBy(table, orderBy) : undefined,
@@ -128,6 +150,22 @@ const generateSelectArray = (
   };
 };
 
+/**
+ * Generates a resolver for selecting a single record from a PostgreSQL table.
+ *
+ * This function constructs a GraphQL field resolver that handles fetching a single record
+ * (i.e. findFirst) from the specified table. It extracts the selected columns, applies ordering
+ * and filtering, and remaps the result to the appropriate GraphQL output format.
+ *
+ * @param db - The PostgreSQL database instance.
+ * @param tableName - The name of the table to query.
+ * @param tables - A record mapping table names to their corresponding Table definitions.
+ * @param relationMap - A mapping of table names to their relations (with inner relation configurations).
+ * @param orderArgs - The GraphQL input type defining ordering arguments.
+ * @param filterArgs - The GraphQL input type defining filtering arguments.
+ * @returns A CreatedResolver object containing the resolver name, arguments, and the resolver function.
+ * @throws Error if the query builder for the specified table is not found.
+ */
 const generateSelectSingle = (
   db: PgDatabase<any, any, any>,
   tableName: string,
@@ -163,7 +201,12 @@ const generateSelectSingle = (
 
   return {
     name: queryName,
-    resolver: async (source, args: Partial<TableSelectArgs>, context, info) => {
+    resolver: async (
+      _source,
+      args: Partial<TableSelectArgs>,
+      _context,
+      info,
+    ) => {
       try {
         const { offset, orderBy, where } = args;
 
@@ -211,6 +254,20 @@ const generateSelectSingle = (
   };
 };
 
+/**
+ * Generates a resolver for inserting an array of records into a PostgreSQL table.
+ *
+ * This function creates a GraphQL field resolver that handles batch insert operations.
+ * It remaps the input data from GraphQL format to the database format, executes the insert,
+ * and returns the inserted records remapped into GraphQL output format.
+ *
+ * @param db - The PostgreSQL database instance.
+ * @param tableName - The name of the table into which data will be inserted.
+ * @param table - The PostgreSQL table definition.
+ * @param baseType - The GraphQL input type representing the table's insert input.
+ * @returns A CreatedResolver object containing the resolver name, arguments, and the resolver function.
+ * @throws GraphQLError if no values are provided for insertion.
+ */
 const generateInsertArray = (
   db: PgDatabase<any, any, any>,
   tableName: string,
@@ -229,9 +286,9 @@ const generateInsertArray = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { values: Record<string, any>[] },
-      context,
+      _context,
       info,
     ) => {
       try {
@@ -255,7 +312,6 @@ const generateInsertArray = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -263,6 +319,19 @@ const generateInsertArray = (
   };
 };
 
+/**
+ * Generates a resolver for inserting a single record into a PostgreSQL table.
+ *
+ * This function creates a GraphQL field resolver for single record insertion.
+ * It remaps the input data from GraphQL format to the database format, performs the insert,
+ * and returns the inserted record remapped into GraphQL output format.
+ *
+ * @param db - The PostgreSQL database instance.
+ * @param tableName - The name of the table into which data will be inserted.
+ * @param table - The PostgreSQL table definition.
+ * @param baseType - The GraphQL input type representing the table's insert input.
+ * @returns A CreatedResolver object containing the resolver name, arguments, and the resolver function.
+ */
 const generateInsertSingle = (
   db: PgDatabase<any, any, any>,
   tableName: string,
@@ -281,9 +350,9 @@ const generateInsertSingle = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { values: Record<string, any> },
-      context,
+      _context,
       info,
     ) => {
       try {
@@ -308,7 +377,6 @@ const generateInsertSingle = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -316,6 +384,22 @@ const generateInsertSingle = (
   };
 };
 
+/**
+ * Generates a resolver for updating records in a PostgreSQL table.
+ *
+ * This function creates a GraphQL field resolver for update operations.
+ * It remaps the update input data from GraphQL format to the database format, constructs
+ * an update query with optional filtering conditions, and returns the updated records
+ * remapped into GraphQL output format.
+ *
+ * @param db - The PostgreSQL database instance.
+ * @param tableName - The name of the table to update.
+ * @param table - The PostgreSQL table definition.
+ * @param setArgs - The GraphQL input type representing the update input.
+ * @param filterArgs - The GraphQL input type representing filter arguments.
+ * @returns A CreatedResolver object containing the resolver name, arguments, and the resolver function.
+ * @throws GraphQLError if no update values are specified.
+ */
 const generateUpdate = (
   db: PgDatabase<any, any, any>,
   tableName: string,
@@ -338,9 +422,9 @@ const generateUpdate = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { where?: Filters<Table>; set: Record<string, any> },
-      context,
+      _context,
       info,
     ) => {
       try {
@@ -375,7 +459,6 @@ const generateUpdate = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -383,6 +466,19 @@ const generateUpdate = (
   };
 };
 
+/**
+ * Generates a resolver for deleting records from a PostgreSQL table.
+ *
+ * This function creates a GraphQL field resolver for delete operations.
+ * It constructs a delete query with optional filtering conditions and returns the deleted records
+ * remapped into GraphQL output format.
+ *
+ * @param db - The PostgreSQL database instance.
+ * @param tableName - The name of the table from which to delete records.
+ * @param table - The PostgreSQL table definition.
+ * @param filterArgs - The GraphQL input type representing filter arguments.
+ * @returns A CreatedResolver object containing the resolver name, arguments, and the resolver function.
+ */
 const generateDelete = (
   db: PgDatabase<any, any, any>,
   tableName: string,
@@ -401,9 +497,9 @@ const generateDelete = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { where?: Filters<Table> },
-      context,
+      _context,
       info,
     ) => {
       try {
@@ -433,7 +529,6 @@ const generateDelete = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -441,6 +536,25 @@ const generateDelete = (
   };
 };
 
+/**
+ * Generates the complete GraphQL schema data from the provided Drizzle-ORM schema and PostgreSQL database instance.
+ *
+ * This function processes the Drizzle-ORM schema to extract table definitions and relations, then generates:
+ * - GraphQL query resolvers for selecting records.
+ * - GraphQL mutation resolvers for inserting, updating, and deleting records.
+ * - GraphQL input and output types for each table.
+ *
+ * The resulting schema data includes queries, mutations, inputs, and output types which can be used to build a complete
+ * GraphQL schema.
+ *
+ * @template TDrizzleInstance - The PostgreSQL database instance type.
+ * @template TSchema - The Drizzle-ORM schema object mapping table names to table definitions.
+ * @param db - The PostgreSQL database instance.
+ * @param schema - The Drizzle-ORM schema object.
+ * @param relationsDepthLimit - Optional limit for the depth of generated relation fields in queries.
+ * @returns An object containing the generated queries, mutations, inputs, and output types.
+ * @throws Error if no tables are detected in the provided schema.
+ */
 export const generateSchemaData = <
   TDrizzleInstance extends PgDatabase<any, any, any>,
   TSchema extends Record<string, Table | unknown>,
@@ -473,31 +587,29 @@ export const generateSchemaData = <
         ([_tableName, tableValue]) => tableValue === (value as Relations).table,
       )![0] as string,
       value as Relations,
-    ]).map<[string, Record<string, Relation>]>(([tableName, relValue]) => [
+    ])
+    .map<[string, Record<string, Relation>]>(([tableName, relValue]) => [
       tableName,
       relValue.config(createTableRelationsHelpers(tables[tableName]!)),
     ]);
 
   const namedRelations = Object.fromEntries(
-    rawRelations
-      .map(([relName, config]) => {
-        const namedConfig: Record<string, TableNamedRelations> = Object
-          .fromEntries(
-            Object.entries(config).map((
-              [innerRelName, innerRelValue],
-            ) => [innerRelName, {
-              relation: innerRelValue,
-              targetTableName: tableEntries.find(([_tableName, tableValue]) =>
+    rawRelations.map(([relName, config]) => {
+      const namedConfig: Record<string, TableNamedRelations> = Object
+        .fromEntries(
+          Object.entries(config).map(([innerRelName, innerRelValue]) => {
+            const targetTableName =
+              tableEntries.find(([_tableName, tableValue]) =>
                 tableValue === innerRelValue.referencedTable
-              )![0],
-            }]),
-          );
-
-        return [
-          relName,
-          namedConfig,
-        ];
-      }),
+              )![0];
+            return [
+              innerRelName,
+              { relation: innerRelValue, targetTableName },
+            ];
+          }),
+        );
+      return [relName, namedConfig];
+    }),
   );
 
   const queries: ThunkObjMap<GraphQLFieldConfig<any, any>> = {};
@@ -600,9 +712,9 @@ export const generateSchemaData = <
       args: deleteGenerated.args,
       resolve: deleteGenerated.resolver,
     };
-    [insertInput, updateInput, tableFilters, tableOrder].forEach((
-      e,
-    ) => (inputs[e.name] = e));
+    [insertInput, updateInput, tableFilters, tableOrder].forEach(
+      (e) => (inputs[e.name] = e),
+    );
     outputs[selectSingleOutput.name] = selectSingleOutput;
     outputs[singleTableItemOutput.name] = singleTableItemOutput;
   }

@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  type Column,
   desc,
   eq,
   getTableColumns,
@@ -20,7 +21,6 @@ import {
   notLike,
   One,
   or,
-  type Column,
   type SQL,
   type Table,
 } from "drizzle-orm";
@@ -28,6 +28,7 @@ import {
   GraphQLBoolean,
   GraphQLEnumType,
   GraphQLError,
+  GraphQLFieldConfigArgumentMap,
   type GraphQLFieldResolver,
   GraphQLInputObjectType,
   GraphQLInt,
@@ -63,16 +64,26 @@ import type {
   TableNamedRelations,
   TableSelectArgs,
 } from "./types.ts";
-import { AnyDrizzleDB } from "../../types.ts";
+import type { AnyDrizzleDB } from "../../types.ts";
 
 /**
- * Helper factory to create a non-null list GraphQL type.
+ * Helper factory that creates a non-null list GraphQL type.
+ *
+ * This function wraps a given GraphQL type in a non-null list of non-null values.
+ *
+ * @param type - A GraphQLScalarType or GraphQLObjectType to wrap.
+ * @returns A new GraphQLNonNull type wrapping a GraphQLList of non-null instances of the provided type.
  */
 export const nonNullList = (type: GraphQLScalarType | GraphQLObjectType) =>
   new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
 
 /**
- * A higher-order function to wrap resolver logic in common error handling.
+ * Higher-order function that wraps a resolver function with standardized error handling.
+ *
+ * If the resolver throws an error, it is caught and rethrown as a GraphQLError with a meaningful message.
+ *
+ * @param resolver - The original GraphQL field resolver function.
+ * @returns A new GraphQLFieldResolver function with error handling.
  */
 export const withGraphQLError = (
   resolver: GraphQLFieldResolver<any, any>,
@@ -89,10 +100,23 @@ async (source, args, context, info) => {
 };
 
 /**
- * A generic caching helper built on WeakMap.
+ * Generic caching helper built using a WeakMap.
+ *
+ * This class provides a simple interface to cache computed values for object keys.
+ *
+ * @template K - The type of the key (must be an object).
+ * @template V - The type of the cached value.
  */
 class Cache<K extends object, V> {
   private map = new WeakMap<K, V>();
+
+  /**
+   * Retrieves a cached value by key, or computes and caches it if not present.
+   *
+   * @param key - The key to retrieve.
+   * @param compute - A function that computes the value if it is not cached.
+   * @returns The cached or computed value.
+   */
   get(key: K, compute: () => V): V {
     if (this.map.has(key)) return this.map.get(key)!;
     const value = compute();
@@ -114,6 +138,16 @@ export const fieldCache = new Cache<object, Record<string, ConvertedColumn>>();
 export const orderTypeCache = new Cache<object, GraphQLInputObjectType>();
 export const filterTypeCache = new Cache<object, GraphQLInputObjectType>();
 
+/**
+ * Extracts selected columns from a parsed GraphQL resolve tree.
+ *
+ * It iterates over the fields in the provided tree and checks whether each field corresponds to a column in the table.
+ * If no columns are selected, it defaults to selecting the first column.
+ *
+ * @param tree - A record of ResolveTree objects representing the GraphQL query selection.
+ * @param table - The database table from which to extract columns.
+ * @returns A record mapping column names to `true`, indicating selected columns.
+ */
 export const extractSelectedColumnsFromTree = (
   tree: Record<string, ResolveTree>,
   table: Table,
@@ -134,8 +168,15 @@ export const extractSelectedColumnsFromTree = (
 };
 
 /**
- * Can't automatically determine column type on type level
- * Since drizzle table types extend eachother
+ * Extracts selected columns from a parsed GraphQL resolve tree in SQL format.
+ *
+ * This function is similar to `extractSelectedColumnsFromTree` but returns a record mapping column names
+ * to their corresponding Column objects.
+ *
+ * @template TColType - The expected column type.
+ * @param tree - A record of ResolveTree objects representing the GraphQL query selection.
+ * @param table - The database table from which to extract columns.
+ * @returns A record mapping column names to Column objects.
  */
 export const extractSelectedColumnsFromTreeSQLFormat = <
   TColType extends Column = Column,
@@ -157,6 +198,13 @@ export const extractSelectedColumnsFromTreeSQLFormat = <
   return Object.fromEntries(selectedColumns) as Record<string, TColType>;
 };
 
+/**
+ * A GraphQL input object type representing ordering options for a column.
+ *
+ * Contains two fields:
+ * - direction: The sort direction (ascending or descending).
+ * - priority: The priority of the field when sorting.
+ */
 export const innerOrder = new GraphQLInputObjectType({
   name: "InnerOrder" as const,
   fields: {
@@ -185,6 +233,17 @@ export const innerOrder = new GraphQLInputObjectType({
   } as const,
 });
 
+/**
+ * Generates a GraphQL input type for filtering a specific column.
+ *
+ * This function creates an input object type that defines various filter operators (e.g. eq, ne, gt, lt)
+ * for the provided column. It also includes an "OR" field for logical disjunction.
+ *
+ * @param column - The database column to filter.
+ * @param tableName - The name of the table containing the column.
+ * @param columnName - The name of the column.
+ * @returns A GraphQLInputObjectType defining filter operators for the column.
+ */
 const generateColumnFilterValues = (
   column: Column,
   tableName: string,
@@ -265,7 +324,17 @@ const generateColumnFilterValues = (
   return type;
 };
 
+// Caches for table ordering fields.
 const orderMap = new WeakMap<object, Record<string, ConvertedInputColumn>>();
+/**
+ * Caches and returns a mapping of column names to their GraphQL order type for a table.
+ *
+ * If the mapping for the table is already cached, it returns the cached version.
+ * Otherwise, it creates a new mapping where each column is assigned the innerOrder type.
+ *
+ * @param table - The database table.
+ * @returns A record mapping column names to ConvertedInputColumn representing order configuration.
+ */
 const generateTableOrderCached = (table: Table) => {
   if (orderMap.has(table)) return orderMap.get(table)!;
 
@@ -273,9 +342,7 @@ const generateTableOrderCached = (table: Table) => {
   const columnEntries = Object.entries(columns);
 
   const remapped = Object.fromEntries(
-    columnEntries.map((
-      [columnName, _columnDescription],
-    ) => [columnName, { type: innerOrder }]),
+    columnEntries.map(([columnName, _]) => [columnName, { type: innerOrder }]),
   );
 
   orderMap.set(table, remapped);
@@ -283,7 +350,18 @@ const generateTableOrderCached = (table: Table) => {
   return remapped;
 };
 
+// Caches for table filter input types.
 const filterMap = new WeakMap<object, Record<string, ConvertedInputColumn>>();
+/**
+ * Caches and returns a mapping of column names to their GraphQL filter input types for a table.
+ *
+ * For each column, it generates a GraphQLInputObjectType defining filter operators.
+ * The result is cached for future use.
+ *
+ * @param table - The database table.
+ * @param tableName - The name of the table.
+ * @returns A record mapping column names to ConvertedInputColumn representing filter configuration.
+ */
 const generateTableFilterValuesCached = (table: Table, tableName: string) => {
   if (filterMap.has(table)) return filterMap.get(table)!;
 
@@ -308,7 +386,17 @@ const generateTableFilterValuesCached = (table: Table, tableName: string) => {
   return remapped;
 };
 
+// Caches for table select type fields.
 const fieldMap = new WeakMap<object, Record<string, ConvertedColumn>>();
+/**
+ * Caches and returns the GraphQL type fields for a table's select query.
+ *
+ * It maps each column to its converted GraphQL type using drizzleColumnToGraphQLType.
+ *
+ * @param table - The database table.
+ * @param tableName - The name of the table.
+ * @returns A record mapping column names to their corresponding ConvertedColumn.
+ */
 const generateTableSelectTypeFieldsCached = (
   table: Table,
   tableName: string,
@@ -330,7 +418,17 @@ const generateTableSelectTypeFieldsCached = (
   return remapped;
 };
 
+// Caches for table order GraphQL input types.
 const orderTypeMap = new WeakMap<object, GraphQLInputObjectType>();
+/**
+ * Caches and returns the GraphQL input type for ordering a table.
+ *
+ * It builds the input type based on the cached order fields of the table.
+ *
+ * @param table - The database table.
+ * @param tableName - The name of the table.
+ * @returns A GraphQLInputObjectType representing the table's order by input type.
+ */
 const generateTableOrderTypeCached = (table: Table, tableName: string) => {
   if (orderTypeMap.has(table)) return orderTypeMap.get(table)!;
 
@@ -345,7 +443,17 @@ const generateTableOrderTypeCached = (table: Table, tableName: string) => {
   return order;
 };
 
+// Caches for table filter GraphQL input types.
 const filterTypeMap = new WeakMap<object, GraphQLInputObjectType>();
+/**
+ * Caches and returns the GraphQL input type for filtering a table.
+ *
+ * It builds the input type based on the cached filter fields of the table.
+ *
+ * @param table - The database table.
+ * @param tableName - The name of the table.
+ * @returns A GraphQLInputObjectType representing the table's filters input type.
+ */
 const generateTableFilterTypeCached = (table: Table, tableName: string) => {
   if (filterTypeMap.has(table)) return filterTypeMap.get(table)!;
 
@@ -372,6 +480,23 @@ const generateTableFilterTypeCached = (table: Table, tableName: string) => {
   return filters;
 };
 
+/**
+ * Recursively generates the field definitions for a table select query.
+ *
+ * This function generates the GraphQL field definitions for selecting data from a table,
+ * including nested relations up to a specified depth.
+ *
+ * @template TWithOrder - Indicates whether ordering is enabled.
+ * @param tables - A record mapping table names to Table definitions.
+ * @param tableName - The name of the current table.
+ * @param relationMap - A mapping of table names to their relation configurations.
+ * @param typeName - The base type name for generating nested types.
+ * @param withOrder - Whether to include order information.
+ * @param relationsDepthLimit - The maximum depth for nested relation fields.
+ * @param currentDepth - The current recursion depth (default is 0).
+ * @param usedTables - A set of table names that have already been processed to avoid circular references.
+ * @returns A SelectData object containing order type, filters type, table fields, and relation fields.
+ */
 const generateSelectFields = <TWithOrder extends boolean>(
   tables: Record<string, Table>,
   tableName: string,
@@ -470,6 +595,21 @@ const generateSelectFields = <TWithOrder extends boolean>(
   >;
 };
 
+/**
+ * Generates GraphQL types for a database table.
+ *
+ * This function creates input and output GraphQL types for a given table by extracting its columns,
+ * generating select fields, and wrapping them into appropriate GraphQLInputObjectType and GraphQLObjectType.
+ * It supports both returnable and non-returnable mutation operations.
+ *
+ * @template WithReturning - A boolean flag indicating if mutations should return values.
+ * @param tableName - The name of the table.
+ * @param tables - A record mapping table names to Table definitions.
+ * @param relationMap - A mapping of table names to their relation configurations.
+ * @param withReturning - Whether the mutations return detailed values.
+ * @param relationsDepthLimit - Optional depth limit for nested relations.
+ * @returns An object containing generated input types and output types for the table.
+ */
 export const generateTableTypes = <
   WithReturning extends boolean,
 >(
@@ -580,6 +720,17 @@ export const generateTableTypes = <
   };
 };
 
+/**
+ * Extracts SQL ORDER BY clauses from GraphQL order arguments.
+ *
+ * For each field in the orderArgs, the function constructs a SQL clause based on the column's direction (asc/desc)
+ * and priority. The resulting array of SQL expressions is returned.
+ *
+ * @template TTable - The table type.
+ * @param table - The table for which to generate ORDER BY clauses.
+ * @param orderArgs - A record of order arguments keyed by column name.
+ * @returns An array of SQL expressions representing the ORDER BY clauses.
+ */
 export const extractOrderBy = <
   TTable extends Table,
   TArgs extends OrderByArgs<TTable> = OrderByArgs<TTable>,
@@ -605,6 +756,19 @@ export const extractOrderBy = <
   return sqlArray;
 };
 
+/**
+ * Extracts a SQL filter expression for a specific column based on provided operators.
+ *
+ * This function processes the filter operators (e.g., eq, ne, gt) for a column and returns
+ * a SQL expression. It supports logical OR compositions for operators.
+ *
+ * @template TColumn - The column type.
+ * @param column - The column to filter.
+ * @param columnName - The name of the column.
+ * @param operators - An object specifying filter operators and their values.
+ * @returns A SQL expression representing the filter, or undefined if no filters are applied.
+ * @throws GraphQLError if both direct fields and OR conditions are specified.
+ */
 export const extractFiltersColumn = <TColumn extends Column>(
   column: TColumn,
   columnName: string,
@@ -679,6 +843,19 @@ export const extractFiltersColumn = <TColumn extends Column>(
     : undefined;
 };
 
+/**
+ * Extracts SQL filters for a table based on provided filter arguments.
+ *
+ * Processes each filter condition for the table and returns a combined SQL expression.
+ * Supports logical OR compositions for the filter conditions.
+ *
+ * @template TTable - The table type.
+ * @param table - The table to filter.
+ * @param tableName - The name of the table.
+ * @param filters - An object representing filter conditions.
+ * @returns A SQL expression representing the combined filters, or undefined if no filters are applied.
+ * @throws GraphQLError if both direct filter fields and OR conditions are specified.
+ */
 export const extractFilters = <TTable extends Table>(
   table: TTable,
   tableName: string,
@@ -711,6 +888,20 @@ export const extractFilters = <TTable extends Table>(
     : undefined;
 };
 
+/**
+ * Recursively extracts relation parameters from a GraphQL resolve tree.
+ *
+ * This helper function processes nested relation fields in the resolve tree, extracting
+ * the selected columns, ordering, filtering, and nested relation parameters.
+ *
+ * @param relationMap - A mapping of table names to their relation configurations.
+ * @param tables - A record mapping table names to Table definitions.
+ * @param tableName - The name of the current table.
+ * @param typeName - The base type name used for generating nested relation types.
+ * @param originField - The root ResolveTree from which to extract relation parameters.
+ * @param isInitial - Whether this is the initial call (default is false).
+ * @returns A record mapping relation names to partial ProcessedTableSelectArgs for each relation.
+ */
 const extractRelationsParamsInner = (
   relationMap: Record<string, Record<string, TableNamedRelations>>,
   tables: Record<string, Table>,
@@ -722,9 +913,9 @@ const extractRelationsParamsInner = (
   const relations = relationMap[tableName];
   if (!relations) return undefined;
 
-  const baseField = Object.entries(originField.fieldsByTypeName).find((
-    [key, _value],
-  ) => key === typeName)?.[1];
+  const baseField = Object.entries(originField.fieldsByTypeName).find(
+    ([key, _value]) => key === typeName,
+  )?.[1];
   if (!baseField) return undefined;
 
   const args: Record<string, Partial<ProcessedTableSelectArgs>> = {};
@@ -756,7 +947,7 @@ const extractRelationsParamsInner = (
       ? extractOrderBy(tables[targetTableName]!, relationArgs.orderBy!)
       : undefined;
     const where = relationArgs?.where
-      ? extractFilters(tables[targetTableName]!, relName, relationArgs?.where)
+      ? extractFilters(tables[targetTableName]!, relName, relationArgs.where)
       : undefined;
     const offset = relationArgs?.offset ?? undefined;
     const limit = relationArgs?.limit ?? undefined;
@@ -783,6 +974,19 @@ const extractRelationsParamsInner = (
   return args;
 };
 
+/**
+ * Extracts relation parameters from a GraphQL resolve tree for a table.
+ *
+ * This function is a wrapper around `extractRelationsParamsInner` that initiates the extraction
+ * process from the provided resolve info.
+ *
+ * @param relationMap - A mapping of table names to their relation configurations.
+ * @param tables - A record mapping table names to Table definitions.
+ * @param tableName - The name of the table for which to extract relation parameters.
+ * @param info - The ResolveTree obtained from parsing the GraphQL resolve info.
+ * @param typeName - The base type name used for generating nested relation types.
+ * @returns A record mapping relation names to partial ProcessedTableSelectArgs, or undefined if no relations.
+ */
 export const extractRelationsParams = (
   relationMap: Record<string, Record<string, TableNamedRelations>>,
   tables: Record<string, Table>,
@@ -803,15 +1007,21 @@ export const extractRelationsParams = (
 };
 
 /**
- * Creates a resolver for selecting records.
+ * Creates a GraphQL select resolver for a table.
+ *
+ * This function returns a resolver that executes a select query on the specified table,
+ * applying pagination, ordering, filtering, and relation parameters extracted from the GraphQL query.
+ * The resolver then remaps the raw database result into GraphQL output using the provided remapping function.
+ *
  * @param db - The database instance.
- * @param tableName - Name of the table.
- * @param tables - Map of tables.
- * @param relationMap - Map of relation definitions.
- * @param orderArgs - GraphQL input type for order arguments.
- * @param filterArgs - GraphQL input type for filter arguments.
- * @param queryMethod - Either "findMany" (array) or "findFirst" (single).
- * @param remapFn - Function to remap the raw DB output to GraphQL output.
+ * @param tableName - The name of the table to query.
+ * @param tables - A record mapping table names to Table definitions.
+ * @param relationMap - A mapping of table names to their relation configurations.
+ * @param orderArgs - The GraphQL input type for order arguments.
+ * @param filterArgs - The GraphQL input type for filter arguments.
+ * @param queryMethod - Either "findMany" for multiple records or "findFirst" for a single record.
+ * @param remapFn - A function that remaps the raw database result to GraphQL output.
+ * @returns A CreatedResolver containing the field name, arguments, and resolver function.
  */
 export function createSelectResolver<TDbClient extends AnyDrizzleDB<any>>(
   db: TDbClient,
@@ -851,7 +1061,12 @@ export function createSelectResolver<TDbClient extends AnyDrizzleDB<any>>(
   return {
     name: queryName,
     args: queryArgs,
-    resolver: async (source, args: Partial<TableSelectArgs>, context, info) => {
+    resolver: async (
+      _source,
+      args: Partial<TableSelectArgs>,
+      _context,
+      info,
+    ) => {
       try {
         const { offset, limit, orderBy, where } = args;
         const parsedInfo = parseResolveInfo(info, { deep: true }) as any;
@@ -883,16 +1098,22 @@ export function createSelectResolver<TDbClient extends AnyDrizzleDB<any>>(
 }
 
 /**
- * Creates a resolver for insert operations.
+ * Creates a GraphQL insert resolver for a table.
+ *
+ * This function returns a resolver that handles insert operations.
+ * It remaps GraphQL input to the database input, executes the insert,
+ * and optionally returns the inserted values after remapping them to GraphQL output.
+ *
  * @param db - The database instance.
- * @param tableName - Name of the table.
+ * @param tableName - The name of the table into which to insert.
  * @param table - The table definition.
- * @param baseType - GraphQL input type for the insert.
- * @param withReturning - Whether the query should return values.
- * @param remapFromInput - Function to remap the GraphQL input to DB input.
- * @param remapFn - Function to remap the DB result to GraphQL output.
- * @param extractColumns - (Optional) Function to extract columns for a returning clause.
- * @param relationMap - (Optional) Relation map used by the remap function.
+ * @param baseType - The GraphQL input type for the insert.
+ * @param withReturning - Indicates whether to return inserted values.
+ * @param remapFromInput - A function to remap GraphQL input to database format.
+ * @param remapFn - A function to remap the database result to GraphQL output.
+ * @param extractColumns - (Optional) A function to extract columns for the returning clause.
+ * @param relationMap - (Optional) The relation map used for remapping.
+ * @returns A CreatedResolver containing the insert resolver.
  */
 export function createInsertResolver<TDbClient extends AnyDrizzleDB<any>>(
   db: TDbClient,
@@ -926,7 +1147,7 @@ export function createInsertResolver<TDbClient extends AnyDrizzleDB<any>>(
   return {
     name: queryName,
     args: queryArgs,
-    resolver: async (source, args: any, context, info) => {
+    resolver: async (_source, args: any, _context, info) => {
       try {
         const input = remapFromInput(args.values, table);
         if (Array.isArray(input) && !input.length) {
@@ -950,8 +1171,22 @@ export function createInsertResolver<TDbClient extends AnyDrizzleDB<any>>(
 }
 
 /**
- * Creates a resolver for update operations.
- * (Very similar to createInsertResolver.)
+ * Creates a GraphQL update resolver for a table.
+ *
+ * This function returns a resolver that handles update operations.
+ * It remaps GraphQL input to database format, applies the update with optional filters,
+ * and returns the updated values after remapping to GraphQL output.
+ *
+ * @param db - The database instance.
+ * @param tableName - The name of the table to update.
+ * @param table - The table definition.
+ * @param setType - The GraphQL input type for the update set.
+ * @param filterArgs - The GraphQL input type for filter conditions.
+ * @param remapFromInput - A function to remap GraphQL update input to database format.
+ * @param remapFn - A function to remap the database result to GraphQL output.
+ * @param extractColumns - (Optional) A function to extract columns for the returning clause.
+ * @param relationMap - (Optional) The relation map used for remapping.
+ * @returns A CreatedResolver containing the update resolver.
  */
 export function createUpdateResolver<TDbClient extends AnyDrizzleDB<any>>(
   db: TDbClient,
@@ -977,7 +1212,7 @@ export function createUpdateResolver<TDbClient extends AnyDrizzleDB<any>>(
   return {
     name: queryName,
     args: queryArgs,
-    resolver: async (source, args: any, context, info) => {
+    resolver: async (_source, args: any, _context, info) => {
       try {
         const { set, where } = args;
         const input = remapFromInput(set, table);
@@ -1005,7 +1240,20 @@ export function createUpdateResolver<TDbClient extends AnyDrizzleDB<any>>(
 }
 
 /**
- * Creates a resolver for delete operations.
+ * Creates a GraphQL delete resolver for a table.
+ *
+ * This function returns a resolver that handles delete operations.
+ * It applies optional filters to determine which records to delete, and returns the deleted values
+ * after remapping them to GraphQL output.
+ *
+ * @param db - The database instance.
+ * @param tableName - The name of the table to delete from.
+ * @param table - The table definition.
+ * @param filterArgs - The GraphQL input type for filter conditions.
+ * @param remapFn - A function to remap the database result to GraphQL output.
+ * @param extractColumns - (Optional) A function to extract columns for the returning clause.
+ * @param relationMap - (Optional) The relation map used for remapping.
+ * @returns A CreatedResolver containing the delete resolver.
  */
 export function createDeleteResolver<TDbClient extends AnyDrizzleDB<any>>(
   db: TDbClient,
@@ -1024,11 +1272,11 @@ export function createDeleteResolver<TDbClient extends AnyDrizzleDB<any>>(
   const queryName = `deleteFrom${capitalize(tableName)}`;
   const queryArgs = {
     where: { type: filterArgs },
-  };
+  } as const satisfies GraphQLFieldConfigArgumentMap;
   return {
     name: queryName,
     args: queryArgs,
-    resolver: async (source, args: any, context, info) => {
+    resolver: async (_source, args: any, _context, info) => {
       try {
         const { where } = args;
         let query = (db.delete as any)(table);

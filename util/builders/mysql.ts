@@ -47,6 +47,24 @@ import type {
   TableSelectArgs,
 } from "./types.ts";
 
+/**
+ * Generates a resolver for selecting an array of records from a MySQL table.
+ *
+ * This function constructs a GraphQL field resolver that handles fetching multiple records
+ * (using the `findMany` method) from the specified table. It extracts the selected columns from the
+ * GraphQL query, applies pagination (offset and limit), ordering, filtering, and relation parameters
+ * based on the GraphQL resolve info, and finally remaps the raw database query result into the
+ * appropriate GraphQL output format.
+ *
+ * @param db - The MySQL database instance.
+ * @param tableName - The name of the table to query.
+ * @param tables - A record mapping table names to their corresponding Table definitions.
+ * @param relationMap - A mapping of table names to their relation configurations.
+ * @param orderArgs - The GraphQL input type defining ordering arguments.
+ * @param filterArgs - The GraphQL input type defining filtering arguments.
+ * @returns A CreatedResolver containing the field name, expected arguments, and the resolver function.
+ * @throws Error if the query builder for the table is not found.
+ */
 const generateSelectArray = (
   db: MySqlDatabase<any, any, any>,
   tableName: string,
@@ -85,7 +103,12 @@ const generateSelectArray = (
 
   return {
     name: queryName,
-    resolver: async (source, args: Partial<TableSelectArgs>, context, info) => {
+    resolver: async (
+      _source,
+      args: Partial<TableSelectArgs>,
+      _context,
+      info,
+    ) => {
       try {
         const { offset, limit, orderBy, where } = args;
 
@@ -120,7 +143,6 @@ const generateSelectArray = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -128,6 +150,23 @@ const generateSelectArray = (
   };
 };
 
+/**
+ * Generates a resolver for selecting a single record from a MySQL table.
+ *
+ * This function constructs a GraphQL field resolver that handles fetching a single record
+ * (using the `findFirst` method) from the specified table. It extracts the selected columns from
+ * the GraphQL query, applies pagination (offset), ordering, and filtering based on the GraphQL resolve
+ * info, and finally remaps the result into the appropriate GraphQL output format.
+ *
+ * @param db - The MySQL database instance.
+ * @param tableName - The name of the table to query.
+ * @param tables - A record mapping table names to their corresponding Table definitions.
+ * @param relationMap - A mapping of table names to their relation configurations.
+ * @param orderArgs - The GraphQL input type defining ordering arguments.
+ * @param filterArgs - The GraphQL input type defining filtering arguments.
+ * @returns A CreatedResolver containing the field name, expected arguments, and the resolver function.
+ * @throws Error if the query builder for the table is not found.
+ */
 const generateSelectSingle = (
   db: MySqlDatabase<any, any, any>,
   tableName: string,
@@ -163,7 +202,12 @@ const generateSelectSingle = (
 
   return {
     name: queryName,
-    resolver: async (source, args: Partial<TableSelectArgs>, context, info) => {
+    resolver: async (
+      _source,
+      args: Partial<TableSelectArgs>,
+      _context,
+      info,
+    ) => {
       try {
         const { offset, orderBy, where } = args;
 
@@ -203,7 +247,6 @@ const generateSelectSingle = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -211,6 +254,20 @@ const generateSelectSingle = (
   };
 };
 
+/**
+ * Generates a resolver for inserting an array of records into a MySQL table.
+ *
+ * This function constructs a GraphQL field resolver for batch insert operations.
+ * It remaps the input data from GraphQL format to the database format, performs the insert,
+ * and returns a success indicator.
+ *
+ * @param db - The MySQL database instance.
+ * @param tableName - The name of the table to insert into.
+ * @param table - The MySqlTable definition representing the target table.
+ * @param baseType - The GraphQL input type representing the insert input schema.
+ * @returns A CreatedResolver containing the resolver name, expected arguments, and the resolver function.
+ * @throws GraphQLError if no values are provided for insertion.
+ */
 const generateInsertArray = (
   db: MySqlDatabase<any, any, any, any>,
   tableName: string,
@@ -228,10 +285,10 @@ const generateInsertArray = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { values: Record<string, any>[] },
-      context,
-      info,
+      _context,
+      _info,
     ) => {
       try {
         const input = remapFromGraphQLArrayInput(args.values, table);
@@ -244,7 +301,6 @@ const generateInsertArray = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -252,6 +308,19 @@ const generateInsertArray = (
   };
 };
 
+/**
+ * Generates a resolver for inserting a single record into a MySQL table.
+ *
+ * This function constructs a GraphQL field resolver for single record insert operations.
+ * It remaps the input data from GraphQL format to the database format, performs the insert,
+ * and returns a success indicator.
+ *
+ * @param db - The MySQL database instance.
+ * @param tableName - The name of the table to insert into.
+ * @param table - The MySqlTable definition representing the target table.
+ * @param baseType - The GraphQL input type representing the insert input schema.
+ * @returns A CreatedResolver containing the resolver name, expected arguments, and the resolver function.
+ */
 const generateInsertSingle = (
   db: MySqlDatabase<any, any, any, any>,
   tableName: string,
@@ -269,10 +338,10 @@ const generateInsertSingle = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { values: Record<string, any> },
-      context,
-      info,
+      _context,
+      _info,
     ) => {
       try {
         const input = remapFromGraphQLSingleInput(args.values, table);
@@ -284,7 +353,6 @@ const generateInsertSingle = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -292,6 +360,21 @@ const generateInsertSingle = (
   };
 };
 
+/**
+ * Generates a resolver for updating records in a MySQL table.
+ *
+ * This function constructs a GraphQL field resolver for update operations.
+ * It remaps the update input from GraphQL format to the database format, applies the update
+ * with optional filtering conditions, and returns a success indicator.
+ *
+ * @param db - The MySQL database instance.
+ * @param tableName - The name of the table to update.
+ * @param table - The MySqlTable definition representing the target table.
+ * @param setArgs - The GraphQL input type representing the update input schema.
+ * @param filterArgs - The GraphQL input type representing the filtering criteria.
+ * @returns A CreatedResolver containing the resolver name, expected arguments, and the resolver function.
+ * @throws GraphQLError if no update values are specified.
+ */
 const generateUpdate = (
   db: MySqlDatabase<any, any, any>,
   tableName: string,
@@ -313,10 +396,10 @@ const generateUpdate = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { where?: Filters<Table>; set: Record<string, any> },
-      context,
-      info,
+      _context,
+      _info,
     ) => {
       try {
         const { where, set } = args;
@@ -339,7 +422,6 @@ const generateUpdate = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -347,6 +429,19 @@ const generateUpdate = (
   };
 };
 
+/**
+ * Generates a resolver for deleting records from a MySQL table.
+ *
+ * This function constructs a GraphQL field resolver for delete operations.
+ * It applies optional filtering conditions to determine which records to delete and
+ * returns a success indicator.
+ *
+ * @param db - The MySQL database instance.
+ * @param tableName - The name of the table from which to delete records.
+ * @param table - The MySqlTable definition representing the target table.
+ * @param filterArgs - The GraphQL input type representing the filtering criteria.
+ * @returns A CreatedResolver containing the resolver name, expected arguments, and the resolver function.
+ */
 const generateDelete = (
   db: MySqlDatabase<any, any, any>,
   tableName: string,
@@ -364,10 +459,10 @@ const generateDelete = (
   return {
     name: queryName,
     resolver: async (
-      source,
+      _source,
       args: { where?: Filters<Table> },
-      context,
-      info,
+      _context,
+      _info,
     ) => {
       try {
         const { where } = args;
@@ -385,7 +480,6 @@ const generateDelete = (
         if (typeof e === "object" && typeof (<any> e).message === "string") {
           throw new GraphQLError((<any> e).message);
         }
-
         throw e;
       }
     },
@@ -393,6 +487,26 @@ const generateDelete = (
   };
 };
 
+/**
+ * Generates the complete GraphQL schema data from a Drizzle-ORM schema and a MySQL database instance.
+ *
+ * This function processes the provided Drizzle-ORM schema to extract table definitions and relations,
+ * then generates:
+ * - GraphQL query resolvers for selecting records (both single and multiple).
+ * - GraphQL mutation resolvers for inserting, updating, and deleting records.
+ * - GraphQL input and output types for each table.
+ * - A MutationReturn type to indicate the success of mutation operations.
+ *
+ * The resulting schema data is returned as an object containing queries, mutations, inputs, and output types.
+ *
+ * @template TDrizzleInstance - The type of the MySQL database instance.
+ * @template TSchema - The Drizzle-ORM schema object mapping table names to table definitions.
+ * @param db - The MySQL database instance.
+ * @param schema - The Drizzle-ORM schema object.
+ * @param relationsDepthLimit - Optional limit for the depth of generated relation fields in queries.
+ * @returns An object containing the generated queries, mutations, input types, and output types.
+ * @throws Error if no tables are detected in the provided schema.
+ */
 export const generateSchemaData = <
   TDrizzleInstance extends MySqlDatabase<any, any, any, any>,
   TSchema extends Record<string, Table | unknown>,
@@ -422,31 +536,29 @@ export const generateSchemaData = <
         ([_tableName, tableValue]) => tableValue === (value as Relations).table,
       )![0] as string,
       value as Relations,
-    ]).map<[string, Record<string, Relation>]>(([tableName, relValue]) => [
+    ])
+    .map<[string, Record<string, Relation>]>(([tableName, relValue]) => [
       tableName,
       relValue.config(createTableRelationsHelpers(tables[tableName]!)),
     ]);
 
   const namedRelations = Object.fromEntries(
-    rawRelations
-      .map(([relName, config]) => {
-        const namedConfig: Record<string, TableNamedRelations> = Object
-          .fromEntries(
-            Object.entries(config).map((
-              [innerRelName, innerRelValue],
-            ) => [innerRelName, {
-              relation: innerRelValue,
-              targetTableName: tableEntries.find(([_tableName, tableValue]) =>
+    rawRelations.map(([relName, config]) => {
+      const namedConfig: Record<string, TableNamedRelations> = Object
+        .fromEntries(
+          Object.entries(config).map(([innerRelName, innerRelValue]) => {
+            const targetTableName =
+              tableEntries.find(([_tableName, tableValue]) =>
                 tableValue === innerRelValue.referencedTable
-              )![0],
-            }]),
-          );
-
-        return [
-          relName,
-          namedConfig,
-        ];
-      }),
+              )![0];
+            return [
+              innerRelName,
+              { relation: innerRelValue, targetTableName },
+            ];
+          }),
+        );
+      return [relName, namedConfig];
+    }),
   );
 
   const queries: ThunkObjMap<GraphQLFieldConfig<any, any>> = {};
@@ -555,9 +667,9 @@ export const generateSchemaData = <
       args: deleteGenerated.args,
       resolve: deleteGenerated.resolver,
     };
-    [insertInput, updateInput, tableFilters, tableOrder].forEach((
-      e,
-    ) => (inputs[e.name] = e));
+    [insertInput, updateInput, tableFilters, tableOrder].forEach(
+      (e) => (inputs[e.name] = e),
+    );
     outputs[selectSingleOutput.name] = selectSingleOutput;
   }
 

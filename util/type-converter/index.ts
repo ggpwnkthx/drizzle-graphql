@@ -17,9 +17,23 @@ import type { Column } from "drizzle-orm";
 import { capitalize } from "../case-ops.ts";
 import type { ConvertedColumn } from "./types.ts";
 
+// Regular expression to validate allowed characters in enum names.
 const allowedNameChars = /^[a-zA-Z0-9_]+$/;
 
+// Cache for generated GraphQL enum types to prevent re-creation.
 const enumMap = new WeakMap<object, GraphQLEnumType>();
+
+/**
+ * Generates and caches a GraphQLEnumType for a given database column that has enum values.
+ *
+ * This function constructs a GraphQLEnumType with a name derived from the table and column names.
+ * If an enum for the column has already been generated, it returns the cached instance.
+ *
+ * @param column - The database column that contains enum values.
+ * @param columnName - The name of the column.
+ * @param tableName - The name of the table containing the column.
+ * @returns A GraphQLEnumType representing the enum values of the column.
+ */
 const generateEnumCached = (
   column: Column,
   columnName: string,
@@ -45,7 +59,16 @@ const generateEnumCached = (
 };
 
 /**
- * A mapping function receives the current column plus some context and returns a ConvertedColumn.
+ * Function type for dynamically converting a database column into a GraphQL type.
+ *
+ * This function takes a column along with contextual information and returns a ConvertedColumn,
+ * which contains the GraphQL type and an optional description.
+ *
+ * @param column - The database column to be converted.
+ * @param isInput - Indicates whether the conversion is for an input type.
+ * @param columnName - The name of the column.
+ * @param tableName - The name of the table containing the column.
+ * @returns A ConvertedColumn object that includes the GraphQL type and description.
  */
 type DynamicGraphQLTypeFn = (
   column: Column,
@@ -54,13 +77,18 @@ type DynamicGraphQLTypeFn = (
   tableName: string,
 ) => ConvertedColumn<boolean>;
 
-// First, create an empty registry for custom mappings.
+/**
+ * Registry for dynamic GraphQL type mapping functions.
+ *
+ * Custom mapping functions can be registered here to override or extend the default behavior.
+ */
 const dynamicMappings: { [key: string]: DynamicGraphQLTypeFn } = {};
 
 /**
- * Default mappings for basic data types.
+ * Default mappings for converting basic data types from Drizzle columns to GraphQL types.
  *
- * (Note that the "array" mapping calls columnToGraphQLCore recursively on the base column.)
+ * These mappings cover common data types such as boolean, json, date, string, bigint, number, buffer, and array.
+ * The "array" mapping recursively calls `columnToGraphQLCore` on the base column.
  */
 const defaultMappings: { [key: string]: DynamicGraphQLTypeFn } = {
   boolean: (_column, _isInput) => ({
@@ -112,13 +140,18 @@ const defaultMappings: { [key: string]: DynamicGraphQLTypeFn } = {
   },
 };
 
-// Merge default mappings into the registry.
+// Merge the default mappings into the dynamic mapping registry.
 Object.assign(dynamicMappings, defaultMappings);
 
 /**
- * Allows registration of custom GraphQL type mappings.
+ * Registers a custom GraphQL type mapping function.
  *
- * The key can be a dataType (e.g. 'number') or a custom columnType (e.g. 'PgGeometry').
+ * This function allows you to extend or override the default type conversion behavior for a specific
+ * data type or custom column type. The provided function will be used when converting Drizzle columns
+ * to GraphQL types.
+ *
+ * @param key - The key representing the dataType (e.g., 'number') or custom columnType (e.g., 'PgGeometry').
+ * @param fn - The mapping function that converts a column into a ConvertedColumn.
  */
 export const registerGraphQLTypeMapping = (
   key: string,
@@ -128,10 +161,17 @@ export const registerGraphQLTypeMapping = (
 };
 
 /**
- * Converts a Drizzle column into a GraphQL type by first checking for a custom mapping keyed by the column’s
- * `columnType` and then falling back to the mapping keyed by the column’s `dataType`.
+ * Core function to convert a Drizzle column into a GraphQL type.
  *
- * If no mapping is found, an error is thrown.
+ * The function first checks if a custom mapping is registered for the column's `columnType`. If not,
+ * it falls back to checking the mapping for the column's `dataType`. If no mapping is found, an error is thrown.
+ *
+ * @param column - The Drizzle column to be converted.
+ * @param columnName - The name of the column.
+ * @param tableName - The name of the table containing the column.
+ * @param isInput - Indicates whether the conversion is for an input type.
+ * @returns A ConvertedColumn object containing the GraphQL type and an optional description.
+ * @throws Will throw an error if no mapping is found for the column's type.
  */
 function columnToGraphQLCore(
   column: Column,
@@ -161,9 +201,20 @@ function columnToGraphQLCore(
 }
 
 /**
- * Converts a Drizzle column into a GraphQL type.
+ * Converts a Drizzle column into a GraphQL type with proper handling of nullability.
  *
- * This function wraps the core conversion with additional handling for nullability.
+ * This function wraps the core conversion process by first determining the GraphQL type for the column
+ * using `columnToGraphQLCore`, and then applying additional logic to enforce non-null constraints.
+ *
+ * @template TColumn - A type that extends the Drizzle Column type.
+ * @template TIsInput - A boolean indicating whether the conversion is for an input type.
+ * @param column - The Drizzle column to be converted.
+ * @param columnName - The name of the column.
+ * @param tableName - The name of the table containing the column.
+ * @param forceNullable - If true, the field will remain nullable regardless of column constraints.
+ * @param defaultIsNullable - If true and the column has a default value or function, the field will be considered nullable.
+ * @param isInput - Indicates whether the conversion is for an input type (default is false).
+ * @returns A ConvertedColumn object that includes the GraphQL type and optional description, with nullability applied.
  */
 export const drizzleColumnToGraphQLType = <
   TColumn extends Column,
