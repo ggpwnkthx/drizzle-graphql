@@ -3,9 +3,9 @@
   "version": "0.8.5",
   "license": "Apache-2.0",
   "imports": {
-    "drizzle-orm": "npm:drizzle-orm",
-    "graphql": "npm:graphql",
-    "graphql-parse-resolve-info": "npm:graphql-parse-resolve-info"
+    "drizzle-orm": "npm:drizzle-orm@^0.40.0",
+    "graphql": "npm:graphql@^16.10.0",
+    "graphql-parse-resolve-info": "npm:graphql-parse-resolve-info@^4.13.0"
   },
   "exports": "./mod.ts",
   "fmt": {
